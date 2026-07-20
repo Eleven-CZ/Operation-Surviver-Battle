@@ -1,0 +1,7 @@
+Use case: stylized-concept
+Asset type: production coworker pressure-projection / ally sprite atlas
+Primary request: exactly eight original workplace collaborators matching the premium cybernetic pixel-art language and three-quarter top-down camera of the user-provided reference; human colleagues whose stress is projected as combat pressure and who later become allies.
+Layout: exact 4 columns × 2 rows, identical full-body scale/baseline, facing down-right.
+Row 1: HR partner; finance analyst; product manager; frontend developer.
+Row 2: backend developer; department leader; customer representative; technical supervisor.
+Background: perfectly uniform #ff00ff chroma key; no floor, shadow, gradient, scenery, weapons, monsters, aura, text, logos, watermark, crops, or overlap. Do not use #ff00ff on subjects.

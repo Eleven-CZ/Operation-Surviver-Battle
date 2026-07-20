@@ -1,0 +1,8 @@
+Use case: stylized-concept
+Asset type: production playable-character sprite atlas
+Primary request: ten original operations-industry hero sprites matching the premium cybernetic pixel-art language and three-quarter top-down camera of the user-provided reference.
+Layout: exact 5 columns × 2 rows, isolated full-body character centered in each equal cell, identical scale/baseline, facing down-right.
+Row 1: general operations engineer; DBA; network engineer; security operations specialist; IT operations field engineer.
+Row 2: Helpdesk specialist; operations developer; SRE incident commander; implementation delivery engineer; AI infrastructure engineer.
+Style: crisp high-detail pixel sprites, readable at 48–64 px, chunky silhouettes, dark clothing, role-colored emissive trim.
+Background: perfectly uniform #ff00ff chroma key; no floor, shadow, gradient, grid, reflection, glow spill, text, logos, watermark, overlap, crops, or extra characters. Do not use #ff00ff on subjects.

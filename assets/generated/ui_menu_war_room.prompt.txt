@@ -1,0 +1,7 @@
+Use case: stylized-concept
+Asset type: 16:9 video-game main-menu background, intended to sit behind translucent UI panels
+Primary request: An original high-overhead three-quarter-view pixel-art night operations war room connected to a server room, for a game about IT operations incident response.
+Scene: a deep blue-gray NOC at night; rows of small server racks, cable trays, status lights, a few operator desks, wall dashboards represented only as abstract colored pixels, rolling chairs, tool carts, floor markings, faint cooling mist, and tiny distant silhouettes. Cyan monitoring lights, amber warnings, sparse red incident lights, and subtle purple pressure-glitch energy. Keep the center-right and lower-center composition relatively calm and dark so game menu panels remain readable.
+Style: authored low-resolution pixel art, crisp hard pixel edges, compact miniature tech-diorama feeling, high camera and zoomed-out view, many small readable props, restrained lighting, no photorealism, no exact imitation of any existing game, not full HD-2D.
+Composition: wide 16:9, strong depth from upper-left racks toward lower-right desks, dark vignette, no single huge focal character, readable at 1280x720.
+Constraints: absolutely no words, no numbers, no readable UI text, no logos, no trademarks, no watermark, no fantasy weapons, no real company interfaces, no frame or border.

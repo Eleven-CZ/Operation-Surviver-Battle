@@ -1,0 +1,8 @@
+Use case: production-oriented game asset concept sheet
+Asset type: one wide 5-column by 2-row contact sheet containing exactly ten separate pixel-art career emblems for a game UI
+Primary request: Create ten original, highly readable IT-operations career emblems, one emblem centered in each equal cell, arranged in this exact order from left to right.
+Top row: (1) general operations engineer — terminal screen plus compact tool bag, (2) DBA — database cylinder plus transaction ring, (3) network engineer — switch with two linked topology nodes and cable, (4) security operations — shield with scanning eye and lock, (5) IT operations — hard hat plus large cabinet wrench.
+Bottom row: (6) Helpdesk — headset plus ticket clipboard, (7) operations developer — code terminal plus small automation arm, (8) SRE — reliability gauge plus pager and circular recovery arrow, (9) implementation delivery — rugged deployment case plus acceptance clipboard, (10) AI infrastructure — GPU fan rack plus two tiny worker pods.
+Layout: exact 5 x 2 regular grid; every cell the same size; generous internal padding; each object remains fully inside its own cell; do not merge objects across cell boundaries; identical flat dark navy background #07131e in every cell; no grid lines; no outer border.
+Style: authored low-resolution pixel art, crisp hard square pixel edges, compact icon silhouette, high three-quarter view, consistent scale and lighting, restrained cyan/amber/purple/red/green accents, game-ready at small UI sizes.
+Constraints: no words, no letters, no numbers, no readable labels, no logos, no trademarks, no watermark, no people or faces, no gradients crossing cells, no photorealism, no imitation of an existing game's icon set.

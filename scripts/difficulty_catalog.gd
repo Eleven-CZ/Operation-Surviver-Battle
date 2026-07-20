@@ -1,0 +1,214 @@
+class_name DifficultyCatalog
+extends RefCounted
+
+
+static func all() -> Array[Dictionary]:
+	return [
+		{
+			"id": "normal",
+			"name": "普通",
+			"badge": "NORMAL",
+			"color": "65e890",
+			"description": "标准生产压力，当前版本的基准难度。",
+			"unlock": "默认解锁",
+			"spawn_rate": 1.00,
+			"minimum_spawn_interval": 0.14,
+			"enemy_cap": 600,
+			"opening_wave": 16,
+			"batch_start": 180.0,
+			"batch_chance": 0.32,
+			"batch_size": 2,
+			"normal_health": 1.00,
+			"normal_damage": 1.00,
+			"normal_speed": 1.00,
+			"elite_health": 1.00,
+			"elite_damage": 1.00,
+			"elite_speed": 1.00,
+			"boss_health": 1.00,
+			"boss_damage": 1.00,
+			"boss_speed": 1.00,
+			"ability_cooldown": 1.00,
+			"affix_damage": 1.00,
+			"elite_summon_count": 1,
+			"boss_summon_count": 1,
+			"elite_wave_start": 90.0,
+			"elite_wave_interval": 120.0,
+			"elite_wave_end": 270.0,
+			"elite_wave_size": 1,
+			"elite_wave_late_time": 9999.0,
+			"elite_wave_late_size": 1,
+			"elite_wave_final_time": 9999.0,
+			"elite_wave_final_size": 1,
+			"boss_time": 270.0,
+			"boss_clue_multiplier": 1.00,
+			"event_wave_multiplier": 1.00,
+			"validation_duration": 12.0,
+			"validation_cleanup_time": 45.0,
+			"validation_enemy_limit": 18,
+			"reward_multiplier": 1.00,
+		},
+		{
+			"id": "advanced",
+			"name": "高级",
+			"badge": "ADVANCED",
+			"color": "47c9f1",
+			"description": "持续加压，精英开始以编队方式进入生产环境。",
+			"unlock": "通关普通难度",
+			"spawn_rate": 1.55,
+			"minimum_spawn_interval": 0.10,
+			"enemy_cap": 850,
+			"opening_wave": 24,
+			"batch_start": 150.0,
+			"batch_chance": 0.50,
+			"batch_size": 2,
+			"normal_health": 1.60,
+			"normal_damage": 1.45,
+			"normal_speed": 1.08,
+			"elite_health": 2.20,
+			"elite_damage": 1.80,
+			"elite_speed": 1.08,
+			"boss_health": 2.60,
+			"boss_damage": 2.00,
+			"boss_speed": 1.08,
+			"ability_cooldown": 0.82,
+			"affix_damage": 1.25,
+			"elite_summon_count": 2,
+			"boss_summon_count": 2,
+			"elite_wave_start": 60.0,
+			"elite_wave_interval": 60.0,
+			"elite_wave_end": 360.0,
+			"elite_wave_size": 1,
+			"elite_wave_late_time": 180.0,
+			"elite_wave_late_size": 2,
+			"elite_wave_final_time": 9999.0,
+			"elite_wave_final_size": 2,
+			"boss_time": 265.0,
+			"boss_clue_multiplier": 1.30,
+			"event_wave_multiplier": 1.30,
+			"validation_duration": 11.0,
+			"validation_cleanup_time": 32.0,
+			"validation_enemy_limit": 16,
+			"reward_multiplier": 1.50,
+		},
+		{
+			"id": "abyss",
+			"name": "深渊",
+			"badge": "ABYSS",
+			"color": "c68cff",
+			"description": "高密度故障洪峰，普通故障也具备精英级生存压力。",
+			"unlock": "通关高级难度",
+			"spawn_rate": 2.40,
+			"minimum_spawn_interval": 0.065,
+			"enemy_cap": 1300,
+			"opening_wave": 40,
+			"batch_start": 105.0,
+			"batch_chance": 0.68,
+			"batch_size": 3,
+			"normal_health": 3.00,
+			"normal_damage": 2.25,
+			"normal_speed": 1.20,
+			"elite_health": 5.00,
+			"elite_damage": 3.20,
+			"elite_speed": 1.18,
+			"boss_health": 6.50,
+			"boss_damage": 3.75,
+			"boss_speed": 1.18,
+			"ability_cooldown": 0.62,
+			"affix_damage": 1.65,
+			"elite_summon_count": 3,
+			"boss_summon_count": 4,
+			"elite_wave_start": 36.0,
+			"elite_wave_interval": 36.0,
+			"elite_wave_end": 360.0,
+			"elite_wave_size": 2,
+			"elite_wave_late_time": 180.0,
+			"elite_wave_late_size": 3,
+			"elite_wave_final_time": 9999.0,
+			"elite_wave_final_size": 3,
+			"boss_time": 255.0,
+			"boss_clue_multiplier": 1.75,
+			"event_wave_multiplier": 1.75,
+			"validation_duration": 10.0,
+			"validation_cleanup_time": 22.0,
+			"validation_enemy_limit": 14,
+			"reward_multiplier": 2.50,
+		},
+		{
+			"id": "impossible",
+			"name": "这不可能",
+			"badge": "IMPOSSIBLE",
+			"color": "ff4d5e",
+			"description": "不为普通通关设计：故障海、精英编队与不可妥协的 FATAL 核心。",
+			"unlock": "通关深渊难度",
+			"spawn_rate": 4.50,
+			"minimum_spawn_interval": 0.035,
+			"enemy_cap": 2000,
+			"opening_wave": 72,
+			"batch_start": 45.0,
+			"batch_chance": 0.90,
+			"batch_size": 4,
+			"normal_health": 7.00,
+			"normal_damage": 4.50,
+			"normal_speed": 1.45,
+			"elite_health": 12.00,
+			"elite_damage": 6.00,
+			"elite_speed": 1.35,
+			"boss_health": 16.00,
+			"boss_damage": 6.00,
+			"boss_speed": 1.35,
+			"ability_cooldown": 0.42,
+			"affix_damage": 2.10,
+			"elite_summon_count": 5,
+			"boss_summon_count": 8,
+			"elite_wave_start": 30.0,
+			"elite_wave_interval": 15.0,
+			"elite_wave_end": 360.0,
+			"elite_wave_size": 3,
+			"elite_wave_late_time": 180.0,
+			"elite_wave_late_size": 4,
+			"elite_wave_final_time": 270.0,
+			"elite_wave_final_size": 5,
+			"boss_time": 240.0,
+			"boss_clue_multiplier": 2.50,
+			"event_wave_multiplier": 2.50,
+			"validation_duration": 8.0,
+			"validation_cleanup_time": 12.0,
+			"validation_enemy_limit": 10,
+			"reward_multiplier": 5.00,
+		},
+	]
+
+
+static func ids() -> Array[String]:
+	var result: Array[String] = []
+	for difficulty in all():
+		result.append(String(difficulty["id"]))
+	return result
+
+
+static func get_by_id(difficulty_id: String) -> Dictionary:
+	for difficulty in all():
+		if String(difficulty["id"]) == difficulty_id:
+			return difficulty
+	return all()[0]
+
+
+static func index_of(difficulty_id: String) -> int:
+	return ids().find(difficulty_id)
+
+
+static func next_id(difficulty_id: String) -> String:
+	var current_index := index_of(difficulty_id)
+	if current_index < 0 or current_index + 1 >= ids().size():
+		return ""
+	return ids()[current_index + 1]
+
+
+static func pressure_summary(difficulty_id: String) -> String:
+	var difficulty := get_by_id(difficulty_id)
+	return "敌群 ×%.2f · 普通 HP ×%.1f · 精英 HP ×%.1f · Boss HP ×%.1f" % [
+		float(difficulty["spawn_rate"]),
+		float(difficulty["normal_health"]),
+		float(difficulty["elite_health"]),
+		float(difficulty["boss_health"]),
+	]

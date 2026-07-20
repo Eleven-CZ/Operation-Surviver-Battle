@@ -1,0 +1,7 @@
+Use case: stylized-concept
+Asset type: production combat skill icon atlas
+Primary request: exactly ten original square ability icons matching the premium cybernetic pixel-art UI language of the user-provided reference.
+Layout: exact 5 columns × 2 rows, equal dark gunmetal square cells, centered high-contrast symbol.
+Row 1: lime Bash terminal bolt; cyan Ping radar; red Firewall shield-ring; blue-violet Log burst; orange wrench arc.
+Row 2: red-cyan iptables rule-chain; violet database lock zone; green Worker Pod; blue Runbook; gold high-availability redundancy loop.
+Constraints: crisp game-ready pixel art, distinct silhouettes, no words, letters, numbers, characters, scenery, logos, watermark, mobile gloss, or blur.

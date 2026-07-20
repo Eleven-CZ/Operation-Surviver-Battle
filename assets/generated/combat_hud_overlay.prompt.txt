@@ -1,0 +1,6 @@
+Use case: ui-mockup
+Asset type: production transparent-ready 16:9 combat HUD ornament overlay
+Primary request: border-only cybernetic operations HUD matching the reference image's beveled pixel-metal frames and cyan/green/orange warning language.
+Elements: compact top-left health/XP wells; top-center elite/Boss alert plate; top-right square minimap housing; right-center event tracker; bottom-center five-slot skill tray; bottom-left circular incident radar; subtle corner brackets.
+Composition: all ornaments at safe margins, central 75% unobstructed, empty wells sized for native Godot controls.
+Background: perfectly uniform #ff00ff chroma key; no environment, characters, creatures, words, letters, numbers, icons inside slots, fake map dots, logos, watermark, or magenta reflections.

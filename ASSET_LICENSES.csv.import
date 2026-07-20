@@ -1,0 +1,19 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://ckrhi0ron2nui"
+
+[deps]
+
+files=["res://ASSET_LICENSES.game.translation", "res://ASSET_LICENSES.source.translation", "res://ASSET_LICENSES.author.translation", "res://ASSET_LICENSES.source.translation", "res://ASSET_LICENSES.acquired.translation", "res://ASSET_LICENSES.license.translation", "res://ASSET_LICENSES.license.translation", "res://ASSET_LICENSES.license.translation", "res://ASSET_LICENSES.modified.translation", "res://ASSET_LICENSES.modification.translation", "res://ASSET_LICENSES.attribution.translation", "res://ASSET_LICENSES.generative.translation", "res://ASSET_LICENSES.ai.translation", "res://ASSET_LICENSES.ai.translation", "res://ASSET_LICENSES.ai.translation", "res://ASSET_LICENSES.ai.translation", "res://ASSET_LICENSES.prompt.translation", "res://ASSET_LICENSES.reference.translation", "res://ASSET_LICENSES.reference.translation", "res://ASSET_LICENSES.original.translation", "res://ASSET_LICENSES.human.translation", "res://ASSET_LICENSES.similarity.translation", "res://ASSET_LICENSES.commercial.translation", "res://ASSET_LICENSES.target.translation", "res://ASSET_LICENSES.marketing.translation", "res://ASSET_LICENSES.dlc.translation", "res://ASSET_LICENSES.status.translation", "res://ASSET_LICENSES.notes.translation"]
+
+source_file="res://ASSET_LICENSES.csv"
+dest_files=["res://ASSET_LICENSES.game.translation", "res://ASSET_LICENSES.source.translation", "res://ASSET_LICENSES.author.translation", "res://ASSET_LICENSES.source.translation", "res://ASSET_LICENSES.acquired.translation", "res://ASSET_LICENSES.license.translation", "res://ASSET_LICENSES.license.translation", "res://ASSET_LICENSES.license.translation", "res://ASSET_LICENSES.modified.translation", "res://ASSET_LICENSES.modification.translation", "res://ASSET_LICENSES.attribution.translation", "res://ASSET_LICENSES.generative.translation", "res://ASSET_LICENSES.ai.translation", "res://ASSET_LICENSES.ai.translation", "res://ASSET_LICENSES.ai.translation", "res://ASSET_LICENSES.ai.translation", "res://ASSET_LICENSES.prompt.translation", "res://ASSET_LICENSES.reference.translation", "res://ASSET_LICENSES.reference.translation", "res://ASSET_LICENSES.original.translation", "res://ASSET_LICENSES.human.translation", "res://ASSET_LICENSES.similarity.translation", "res://ASSET_LICENSES.commercial.translation", "res://ASSET_LICENSES.target.translation", "res://ASSET_LICENSES.marketing.translation", "res://ASSET_LICENSES.dlc.translation", "res://ASSET_LICENSES.status.translation", "res://ASSET_LICENSES.notes.translation"]
+
+[params]
+
+compress=1
+delimiter=0
+unescape_keys=false
+unescape_translations=true

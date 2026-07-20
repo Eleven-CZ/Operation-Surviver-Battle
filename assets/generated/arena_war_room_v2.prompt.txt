@@ -1,0 +1,8 @@
+Use case: stylized-concept
+Asset type: production game environment background for a top-down survivor-like action game
+Primary request: create a brand-new empty operations war-room arena matching the visual ambition, rendering density, camera height, and cybernetic pixel-art language of the user-provided reference image; reference is style/composition only, not an edit target.
+Scene/backdrop: large dark production data-center floor, square metal tile grid, server racks and NOC desks around the perimeter, cable channels, blinking lamps, vents and hatches; broad uncluttered central combat area.
+Style/medium: premium high-detail crisp pixel art, 2.5D three-quarter top-down viewpoint, modern game-ready dark sci-fi operations center.
+Composition: exact 16:9, camera high enough for hundreds of small enemies, center open, machinery on borders/corners.
+Palette: near-black navy/gunmetal, cyan telemetry, green service lights, sparse amber/red alerts.
+Constraints: environment only; no player, enemies, boss, pickups, HUD, text, numbers, labels, logos, watermark, blur, or painterly look.

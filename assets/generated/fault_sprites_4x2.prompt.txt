@@ -1,0 +1,8 @@
+Use case: stylized-concept
+Asset type: production enemy / elite / boss sprite atlas
+Primary request: exactly eight original operations-failure creatures matching the premium dark cybernetic pixel-art language and three-quarter top-down camera of the user-provided reference.
+Layout: exact 4 columns × 2 rows, isolated creature per equal cell.
+Row 1 normals: torn floating 404 document wraith; floating NXDOMAIN wireframe globe; floating ENOSPC capacity puck; orange mechanical BUG beetle (only normal with legs).
+Row 2: floating 408 hourglass; much larger 502 reverse-proxy gateway elite; much larger OOM 137 memory-reactor elite; enormous black-red FATAL incident-core Boss.
+Hierarchy: normals small, elites roughly twice the mass, Boss largest and most complex.
+Background: perfectly uniform #ff00ff chroma key; no floor, shadow, gradient, grid, scenery, human characters, UI, watermark, extra creatures, or blurry edges. Do not use #ff00ff on subjects.
