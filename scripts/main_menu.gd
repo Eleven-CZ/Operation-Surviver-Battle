@@ -4,6 +4,8 @@ const CareerCatalog := preload("res://scripts/career_catalog.gd")
 const ActionCatalog := preload("res://scripts/career_action_catalog.gd")
 const EventCatalog := preload("res://scripts/event_catalog.gd")
 const DifficultyCatalog := preload("res://scripts/difficulty_catalog.gd")
+const ArtifactCatalog := preload("res://scripts/artifact_catalog.gd")
+const FaultCatalog := preload("res://scripts/fault_catalog.gd")
 const GENERATED_BACKGROUND := "res://assets/generated/ui_menu_war_room.png"
 const UNLOCK_ALL_CHEAT_CODE := "yesifu"
 
@@ -22,10 +24,16 @@ var brief_strategy_labels: Array[Label] = []
 var brief_difficulty_option: OptionButton
 var cheat_code_input: LineEdit
 var cheat_code_status: Label
+var settings_music_style_option: OptionButton
+var museum_category := "fault"
+var museum_detail_box: VBoxContainer
+var museum_entry_buttons: Dictionary = {}
+var museum_category_buttons: Dictionary = {}
 
 
 func _ready() -> void:
 	get_tree().paused = false
+	AudioDirector.enter_menu()
 	selected_career_id = String(ProfileStore.session_career_id)
 	selected_event_id = _get_session_event_id()
 	_build_shell()
@@ -33,6 +41,7 @@ func _ready() -> void:
 	match ProfileStore.requested_menu_tab:
 		"careers": _show_careers()
 		"runbook": _show_runbook()
+		"museum": _show_museum()
 		"settings": _show_settings()
 		_: _show_home()
 	ProfileStore.requested_menu_tab = "home"
@@ -104,6 +113,7 @@ func _build_shell() -> void:
 	nav.add_child(home_button)
 	nav.add_child(_nav_button("职业档案", _show_careers))
 	nav.add_child(_nav_button("能力基线", _show_runbook))
+	nav.add_child(_nav_button("故障博物馆", _show_museum))
 	nav.add_child(_nav_button("设置与操作", _show_settings))
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -541,12 +551,176 @@ func _purchase_upgrade(upgrade_id: String) -> void:
 		_show_runbook()
 
 
+func _show_museum(category: String = "") -> void:
+	if not category.is_empty():
+		museum_category = category
+	if museum_category not in ["fault", "boss", "artifact"]:
+		museum_category = "fault"
+	_clear_content()
+	var unlocks := ProfileStore.get_museum_unlocks()
+	var total_unlocked := Array(unlocks.get("fault", [])).size() + Array(unlocks.get("boss", [])).size() + Array(unlocks.get("artifact", [])).size()
+	var total_entries := FaultCatalog.ids().size() + ArtifactCatalog.ids().size()
+	content_box.add_child(_section_title("故障博物馆", "遇见故障或 Boss、获得神器后永久解锁 · 已归档 %d / %d" % [total_unlocked, total_entries]))
+	museum_category_buttons.clear()
+	var tabs := HBoxContainer.new()
+	tabs.alignment = BoxContainer.ALIGNMENT_CENTER
+	tabs.add_theme_constant_override("separation", 10)
+	content_box.add_child(tabs)
+	for category_id in ["fault", "boss", "artifact"]:
+		var entries := _museum_entries(category_id)
+		var unlocked_count := Array(unlocks.get(category_id, [])).size()
+		var tab := Button.new()
+		tab.custom_minimum_size = Vector2(210, 42)
+		tab.text = "%s  %d / %d" % [_museum_category_title(category_id), unlocked_count, entries.size()]
+		var tab_color := Color("75f3df") if category_id == museum_category else Color("456878")
+		tab.add_theme_stylebox_override("normal", _panel_style(Color("17303d") if category_id == museum_category else Color("0b1822"), tab_color))
+		tab.add_theme_stylebox_override("hover", _panel_style(Color("17303d"), Color("75f3df")))
+		tab.pressed.connect(_show_museum.bind(category_id))
+		tabs.add_child(tab)
+		museum_category_buttons[category_id] = tab
+
+	var body := HBoxContainer.new()
+	body.custom_minimum_size = Vector2(900, 424)
+	body.add_theme_constant_override("separation", 14)
+	content_box.add_child(body)
+	var archive_scroll := ScrollContainer.new()
+	archive_scroll.custom_minimum_size = Vector2(590, 424)
+	body.add_child(archive_scroll)
+	var grid := GridContainer.new()
+	grid.columns = 3
+	grid.add_theme_constant_override("h_separation", 8)
+	grid.add_theme_constant_override("v_separation", 8)
+	archive_scroll.add_child(grid)
+	museum_entry_buttons.clear()
+	var first_entry_id := ""
+	var first_unlocked_id := ""
+	for definition in _museum_entries(museum_category):
+		var entry_id := String(definition.get("id", ""))
+		var unlocked := ProfileStore.is_museum_unlocked(museum_category, entry_id)
+		if first_entry_id.is_empty():
+			first_entry_id = entry_id
+		if unlocked and first_unlocked_id.is_empty():
+			first_unlocked_id = entry_id
+		var button := Button.new()
+		button.custom_minimum_size = Vector2(184, 108)
+		button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		button.icon = _museum_entry_texture(museum_category, entry_id)
+		button.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		button.expand_icon = true
+		button.add_theme_constant_override("icon_max_width", 66)
+		button.add_theme_constant_override("h_separation", 7)
+		button.add_theme_font_size_override("font_size", 12)
+		if unlocked:
+			button.text = "%s\n%s\n已归档" % [definition.get("badge", "◆"), definition.get("name", entry_id)]
+			button.add_theme_stylebox_override("normal", _panel_style(Color("0d1c28"), Color(String(definition.get("color", "75f3df"))).darkened(0.30)))
+			button.add_theme_stylebox_override("focus", _panel_style(Color("17303d"), Color(String(definition.get("color", "75f3df")))))
+		else:
+			button.text = "LOCKED\n未识别记录\n等待遭遇"
+			button.add_theme_color_override("icon_normal_color", Color(0.16, 0.20, 0.23, 0.72))
+			button.add_theme_color_override("font_color", Color("657984"))
+			button.add_theme_stylebox_override("normal", _panel_style(Color("08131b"), Color("263d48")))
+		button.pressed.connect(_show_museum_detail.bind(museum_category, entry_id))
+		grid.add_child(button)
+		museum_entry_buttons[entry_id] = button
+
+	var detail_scroll := ScrollContainer.new()
+	detail_scroll.custom_minimum_size = Vector2(296, 424)
+	body.add_child(detail_scroll)
+	museum_detail_box = VBoxContainer.new()
+	museum_detail_box.custom_minimum_size = Vector2(278, 410)
+	museum_detail_box.add_theme_constant_override("separation", 8)
+	detail_scroll.add_child(museum_detail_box)
+	var initial_entry := first_unlocked_id if not first_unlocked_id.is_empty() else first_entry_id
+	_show_museum_detail(museum_category, initial_entry)
+	if museum_entry_buttons.has(initial_entry):
+		museum_entry_buttons[initial_entry].grab_focus()
+
+
+func _show_museum_detail(category: String, entry_id: String) -> void:
+	if museum_detail_box == null:
+		return
+	for child in museum_detail_box.get_children():
+		museum_detail_box.remove_child(child)
+		child.queue_free()
+	var definition := _museum_definition(category, entry_id)
+	if definition.is_empty():
+		return
+	var unlocked := ProfileStore.is_museum_unlocked(category, entry_id)
+	var accent := Color(String(definition.get("color", "75f3df")))
+	var art_panel := PanelContainer.new()
+	art_panel.custom_minimum_size = Vector2(278, 208)
+	art_panel.add_theme_stylebox_override("panel", _panel_style(Color("07131e"), accent if unlocked else Color("304852")))
+	museum_detail_box.add_child(art_panel)
+	var art := TextureRect.new()
+	art_panel.add_child(art)
+	art.texture = _museum_entry_texture(category, entry_id)
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	art.modulate = Color.WHITE if unlocked else Color(0.10, 0.13, 0.15, 0.78)
+	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if not unlocked:
+		museum_detail_box.add_child(_label("未识别档案", 23, Color("718b96")))
+		var lock_hint := "在值班中遭遇该目标后解锁完整记录。" if category != "artifact" else "在值班中拾取并安装该神器后解锁完整记录。"
+		var locked_label := _label(lock_hint, 14, Color("7897a5"))
+		locked_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		locked_label.custom_minimum_size = Vector2(278, 64)
+		museum_detail_box.add_child(locked_label)
+		return
+	museum_detail_box.add_child(_label(String(definition.get("name", entry_id)), 22, accent.lightened(0.18)))
+	var tier_text := String(definition.get("tier", "神器协议" if category == "artifact" else _museum_category_title(category)))
+	museum_detail_box.add_child(_label("%s  ·  %s" % [definition.get("badge", "◆"), tier_text], 13, Color("8fb6c5")))
+	var description := _label(String(definition.get("description", "")), 14, Color("d3e2e7"))
+	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	description.custom_minimum_size = Vector2(278, 62)
+	museum_detail_box.add_child(description)
+	var effect_text := String(definition.get("effect", definition.get("description", "")))
+	var effect := _label("效果 / 行为\n%s" % effect_text, 13, Color("ffd36a") if category == "artifact" else Color("70caff"))
+	effect.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	effect.custom_minimum_size = Vector2(278, 72)
+	museum_detail_box.add_child(effect)
+
+
+func _museum_entries(category: String) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	if category == "artifact":
+		return ArtifactCatalog.all()
+	for definition in FaultCatalog.all():
+		if String(definition.get("category", "fault")) == category:
+			result.append(definition)
+	return result
+
+
+func _museum_definition(category: String, entry_id: String) -> Dictionary:
+	return ArtifactCatalog.get_by_id(entry_id) if category == "artifact" else FaultCatalog.get_by_id(entry_id)
+
+
+func _museum_entry_texture(category: String, entry_id: String) -> Texture2D:
+	return ArtifactCatalog.icon_texture(entry_id) if category == "artifact" else FaultCatalog.sprite_texture(entry_id)
+
+
+func _museum_category_title(category: String) -> String:
+	match category:
+		"fault": return "小怪与精英"
+		"boss": return "Boss"
+		"artifact": return "神器"
+	return "档案"
+
+
+func get_museum_ui_snapshot() -> Dictionary:
+	return {
+		"category": museum_category,
+		"entry_count": museum_entry_buttons.size(),
+		"category_count": museum_category_buttons.size(),
+		"detail_visible": museum_detail_box != null,
+	}
+
+
 func _show_settings() -> void:
 	_clear_content()
 	content_box.add_child(_section_title("设置与操作", "跨平台输入与可读性选项"))
 	var settings := ProfileStore.get_settings()
 	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(890, 360)
+	panel.custom_minimum_size = Vector2(890, 500)
 	panel.add_theme_stylebox_override("panel", _panel_style(Color("0d1c28"), Color("5a8798")))
 	content_box.add_child(panel)
 	var margin := MarginContainer.new()
@@ -555,16 +729,32 @@ func _show_settings() -> void:
 		margin.add_theme_constant_override(side, 22)
 	var box := VBoxContainer.new()
 	margin.add_child(box)
-	box.add_theme_constant_override("separation", 14)
-	box.add_child(_label("主音量", 17, Color("d8e6e9")))
-	var volume := HSlider.new()
-	volume.min_value = 0.0
-	volume.max_value = 1.0
-	volume.step = 0.05
-	volume.value = float(settings.get("master_volume", 0.85))
-	volume.custom_minimum_size = Vector2(700, 28)
-	volume.value_changed.connect(func(value: float) -> void: ProfileStore.set_setting("master_volume", value))
-	box.add_child(volume)
+	box.add_theme_constant_override("separation", 9)
+	var master_volume := _add_volume_slider(box, "主音量", "master_volume", float(settings.get("master_volume", 0.85)), Color("d8e6e9"))
+	_add_volume_slider(box, "背景音乐", "music_volume", float(settings.get("music_volume", 0.76)), Color("70caff"))
+	_add_volume_slider(box, "战斗与界面音效", "sfx_volume", float(settings.get("sfx_volume", 0.86)), Color("ffd36a"))
+	var music_style_title := _label("BGM 曲风", 15, Color("77e6df"))
+	box.add_child(music_style_title)
+	settings_music_style_option = OptionButton.new()
+	settings_music_style_option.custom_minimum_size = Vector2(700, 38)
+	var selected_style := String(settings.get("music_style", "pulse"))
+	var selected_index := 0
+	for definition in AudioDirector.get_music_style_definitions():
+		var style_id := String(definition.get("id", "pulse"))
+		settings_music_style_option.add_item(String(definition.get("name", style_id)))
+		var item_index := settings_music_style_option.item_count - 1
+		settings_music_style_option.set_item_metadata(item_index, style_id)
+		settings_music_style_option.set_item_tooltip(item_index, String(definition.get("description", "")))
+		if style_id == selected_style:
+			selected_index = item_index
+	settings_music_style_option.select(selected_index)
+	settings_music_style_option.item_selected.connect(func(index: int) -> void:
+		var style_id := String(settings_music_style_option.get_item_metadata(index))
+		ProfileStore.set_setting("music_style", style_id)
+	)
+	box.add_child(settings_music_style_option)
+	var music_style_hint := _label("切换后立即以当前场景试听；战斗、事件、Boss 与恢复验证都会同步换曲。", 12, Color("89a8b4"))
+	box.add_child(music_style_hint)
 	var labels := CheckBox.new()
 	labels.text = "显示故障标签（404 / 502 / OOM 等）"
 	labels.button_pressed = bool(settings.get("fault_labels", true))
@@ -579,7 +769,24 @@ func _show_settings() -> void:
 	var controls := _label("移动：WASD / 方向键 / 左摇杆\n职业小技能：Q 或 Space / 手柄 X\n职业大招：R / 手柄 Y\n协作对齐：E / 手柄 A\n升级选择：鼠标 / 键盘焦点 / 手柄\n开发快捷键：U 升级 · P 事件 · O 精英 · B Boss · T +30秒", 15, Color("9db6c0"))
 	controls.custom_minimum_size = Vector2(780, 110)
 	box.add_child(controls)
-	volume.grab_focus()
+	master_volume.grab_focus()
+
+
+func _add_volume_slider(box: VBoxContainer, title: String, setting_id: String, current_value: float, color: Color) -> HSlider:
+	var value_label := _label("%s  %d%%" % [title, roundi(current_value * 100.0)], 15, color)
+	box.add_child(value_label)
+	var slider := HSlider.new()
+	slider.min_value = 0.0
+	slider.max_value = 1.0
+	slider.step = 0.05
+	slider.value = current_value
+	slider.custom_minimum_size = Vector2(700, 22)
+	slider.value_changed.connect(func(value: float) -> void:
+		value_label.text = "%s  %d%%" % [title, roundi(value * 100.0)]
+		ProfileStore.set_setting(setting_id, value)
+	)
+	box.add_child(slider)
+	return slider
 
 
 func _start_run() -> void:
@@ -606,6 +813,7 @@ func _refresh_header() -> void:
 
 func _clear_content() -> void:
 	selected_detail_box = null
+	museum_detail_box = null
 	brief_difficulty_option = null
 	cheat_code_input = null
 	cheat_code_status = null

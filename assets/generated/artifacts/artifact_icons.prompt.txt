@@ -1,0 +1,42 @@
+Generator: built-in image_gen tool
+Use case: stylized-concept
+Asset type: square game UI artifact icons for iT-BATTLE
+
+Shared style:
+Polished cyberpunk pixel-art game UI icon matching the existing dark industrial server-room icon set. One centered readable symbol, generous padding, thick beveled gunmetal frame, almost-black grid background, no text, letters, numbers, logos, characters, or watermark.
+
+RM -RF:
+A dangerous red terminal window feeding files and folders into a recursive digital shredder vortex. Accent #ff6b5f.
+
+DELETE * FROM incidents:
+A glowing database cylinder being erased by a red SQL deletion beam. Accent #ff9b62.
+
+重装系统:
+A glowing operating-system recovery disk and a server core rebuilding itself from clean blue data blocks. Accent #70caff.
+
+重启设备:
+A compact server appliance wrapped by two bright circular reboot arrows and a glowing power button. Accent #55e7c2.
+
+删库跑路:
+A gold database cylinder with small mechanical running legs sprinting away while loose data blocks trail behind it. Accent #ffcf5a.
+
+ipconfig /flushdns:
+A cyan network globe whose stale cache fragments are blasted away by a clean circular refresh wave. Accent #47c9f1.
+
+kill -9:
+A magenta emergency stop switch striking a hostile process chip with a sharp termination bolt. Accent #ef68d8.
+
+回滚上一版:
+Stacked software version cards pulled backward by a large curved rewind arrow while corrupted red pixels turn healthy violet. Accent #c68cff.
+
+在我机器上是好的:
+A sturdy developer laptop glowing green with a large check mark while distant network nodes flicker outside its safe bubble. Accent #91ee70.
+
+周五禁止发布:
+A deployment rocket and release pipeline frozen inside a translucent green ice crystal, guarded by a closed calendar lock. Accent #65e890.
+
+快照就是备份:
+A golden holographic camera shutter capturing a server into several glowing snapshot layers stored behind it. Accent #ffd36a.
+
+sudo !!:
+A brilliant golden root-access key descending into a terminal console as privilege rings and command energy erupt upward. Accent #ffe77a.

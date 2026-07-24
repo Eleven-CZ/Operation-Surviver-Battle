@@ -3,6 +3,11 @@ extends SceneTree
 const CareerCatalog := preload("res://scripts/career_catalog.gd")
 const ActionCatalog := preload("res://scripts/career_action_catalog.gd")
 
+const RANDOM_SEED_SAMPLES := 256
+const REGULAR_COMBAT_SLOT_CAP := 4
+const SIGNATURE_GROWTH_IDS: Array[String] = ["signature_rate", "signature_quantity", "signature_damage", "signature_area"]
+const META_GROWTH_IDS: Array[String] = ["movement_speed", "career_skill_rate", "career_ultimate_rate"]
+
 var expected_start := {
 	"ops": {},
 	"dba": {},
@@ -15,6 +20,7 @@ var expected_start := {
 	"delivery": {"runbook": 1},
 	"ai_infra": {},
 }
+var failure_count := 0
 
 
 func _initialize() -> void:
@@ -42,25 +48,16 @@ func _run() -> void:
 		var action_snapshot: Dictionary = actions.call("get_action_snapshot")
 		_require(String(action_snapshot.get("signature", {}).get("id", "")) == String(ActionCatalog.get_by_id(career_id)["signature"]["id"]), "%s always has its profession signature attack" % career_id)
 		_require("×0" not in String(combat.call("get_build_summary")), "%s build summary hides zero-level tools" % career_id)
-		var affinity_ids: Array[String] = run.call("_career_affinity_ids")
-		var upgrade_choices: Array[Dictionary] = run.call("_build_upgrade_choices")
-		var has_affinity := false
-		for choice in upgrade_choices:
-			if String(choice["id"]) in affinity_ids:
-				has_affinity = true
-		_require(has_affinity, "%s receives a profession-fit upgrade choice" % career_id)
-		var architecture_choices: Array[Dictionary] = run.call("_build_architecture_choices")
-		var preferred_architecture: String = run.call("_career_architecture_id")
-		var has_preferred_architecture := false
-		for choice in architecture_choices:
-			if String(choice["id"]) == preferred_architecture:
-				has_preferred_architecture = true
-		_require(has_preferred_architecture, "%s sees its preferred architecture" % career_id)
+		_assert_random_upgrade_pool(run, combat, actions, career_id)
+		_assert_random_architecture_pool(run, combat, career_id)
 		_require(not String(run.get_node("HUD").career_protocol_label.text).is_empty(), "%s exposes its protocol in the HUD" % career_id)
 		_test_career_protocol(run, combat, actions, career_id)
 		_require(int(run.career_protocol_completions) >= 1, "%s records protocol execution for settlement" % career_id)
 		get_root().remove_child(run)
 		run.free()
+	if failure_count > 0:
+		quit(1)
+		return
 	print("CAREER_RUNTIME_TEST_PASS careers=%d" % CareerCatalog.all().size())
 	quit(0)
 
@@ -68,8 +65,94 @@ func _run() -> void:
 func _require(condition: bool, message: String) -> void:
 	if condition:
 		return
+	failure_count += 1
 	push_error("CAREER_RUNTIME_TEST_FAIL: " + message)
 	quit(1)
+
+
+func _assert_random_upgrade_pool(run: Node, combat: Node, actions: Node, career_id: String) -> void:
+	var eligible_ids := _eligible_upgrade_ids(run, combat, actions)
+	_require(eligible_ids.size() >= 3, "%s has at least three eligible upgrade cards" % career_id)
+	var seen_ids := {}
+	var saw_choice_without_signature := false
+	var saw_choice_without_affinity := false
+	var affinity_ids: Array[String] = run.call("_career_affinity_ids")
+	for seed_value in range(RANDOM_SEED_SAMPLES):
+		run.rng.seed = seed_value + 1
+		var choices: Array[Dictionary] = run.call("_build_upgrade_choices")
+		_require(choices.size() == mini(3, eligible_ids.size()), "%s rolls exactly three eligible upgrade cards" % career_id)
+		var choice_ids: Array[String] = []
+		var contains_signature := false
+		var contains_affinity := false
+		for choice in choices:
+			var choice_id := String(choice.get("id", ""))
+			_require(choice_id in eligible_ids, "%s never rolls an ineligible upgrade: %s" % [career_id, choice_id])
+			_require(choice_id not in choice_ids, "%s samples upgrade cards without replacement" % career_id)
+			choice_ids.append(choice_id)
+			seen_ids[choice_id] = true
+			contains_signature = contains_signature or choice_id in SIGNATURE_GROWTH_IDS
+			contains_affinity = contains_affinity or choice_id in affinity_ids
+		if not contains_signature:
+			saw_choice_without_signature = true
+		if not contains_affinity:
+			saw_choice_without_affinity = true
+	for eligible_id in eligible_ids:
+		_require(seen_ids.has(eligible_id), "%s full eligible pool can roll %s" % [career_id, eligible_id])
+	for meta_id in META_GROWTH_IDS:
+		_require(seen_ids.has(meta_id), "%s can roll global growth %s" % [career_id, meta_id])
+	if career_id == "delivery":
+		for upgrade_id in actions.call("get_career_upgrade_ids"):
+			_require(seen_ids.has(String(upgrade_id)), "delivery random pool can roll career card %s" % String(upgrade_id))
+	_require(saw_choice_without_signature, "%s allows a three-card roll without an intrinsic-attack card" % career_id)
+	_require(saw_choice_without_affinity, "%s does not force a profession-affinity card into every roll" % career_id)
+
+
+func _eligible_upgrade_ids(run: Node, combat: Node, actions: Node) -> Array[String]:
+	var candidates: Array[String] = combat.call("get_weapon_upgrade_ids")
+	candidates.append_array(actions.call("get_signature_upgrade_ids"))
+	candidates.append_array(actions.call("get_career_upgrade_ids"))
+	candidates.append_array(META_GROWTH_IDS)
+	candidates.append_array(["idempotency", "runbook", "capacity", "redundancy"])
+	var eligible: Array[String] = []
+	for candidate in candidates:
+		if int(run.call("_get_upgrade_level", candidate)) >= int(run.call("_get_upgrade_cap", candidate)):
+			continue
+		if bool(run.call("_is_combat_weapon", candidate)) and int(run.call("_get_upgrade_level", candidate)) == 0 and int(run.call("_regular_combat_slot_count")) >= REGULAR_COMBAT_SLOT_CAP:
+			continue
+		eligible.append(candidate)
+	if bool(combat.call("can_evolve")):
+		eligible.append("iac")
+	return eligible
+
+
+func _assert_random_architecture_pool(run: Node, combat: Node, career_id: String) -> void:
+	var eligible_ids: Array[String] = []
+	for architecture_id in combat.call("get_architecture_upgrade_ids"):
+		var resolved_id := String(architecture_id)
+		if int(run.call("_get_upgrade_level", resolved_id)) < 2:
+			eligible_ids.append(resolved_id)
+	_require(eligible_ids.size() >= 3, "%s has at least three eligible architecture cards" % career_id)
+	var seen_ids := {}
+	var missing_on_some_roll := {}
+	for architecture_id in eligible_ids:
+		missing_on_some_roll[architecture_id] = false
+	for seed_value in range(RANDOM_SEED_SAMPLES):
+		run.rng.seed = 10_000 + seed_value
+		var choices: Array[Dictionary] = run.call("_build_architecture_choices")
+		_require(choices.size() == mini(3, eligible_ids.size()), "%s rolls exactly three eligible architecture cards" % career_id)
+		var choice_ids: Array[String] = []
+		for choice in choices:
+			var choice_id := String(choice.get("id", ""))
+			_require(choice_id in eligible_ids, "%s never rolls an ineligible architecture: %s" % [career_id, choice_id])
+			_require(choice_id not in choice_ids, "%s samples architecture cards without replacement" % career_id)
+			choice_ids.append(choice_id)
+			seen_ids[choice_id] = true
+		for architecture_id in eligible_ids:
+			if architecture_id not in choice_ids:
+				missing_on_some_roll[architecture_id] = true
+	for architecture_id in eligible_ids:
+		_require(seen_ids.has(architecture_id), "%s full architecture pool can roll %s" % [career_id, architecture_id])
+		_require(bool(missing_on_some_roll[architecture_id]), "%s does not force architecture %s into every roll" % [career_id, architecture_id])
 
 
 func _test_career_protocol(run: Node, combat: Node, actions: Node, career_id: String) -> void:
@@ -114,6 +197,9 @@ func _test_career_protocol(run: Node, combat: Node, actions: Node, career_id: St
 			run.call("_career_on_enemy_closed", player.global_position, 0)
 			_require(int(run.career_protocol_count) == 0 and float(actions.signature_timer) == 0.0, "ops development triggers idempotent script retry")
 		"sre":
+			run.career_protocol_progress = 0.0
+			actions.emit_signal("career_metric", "sre_root_closed", 10.0)
+			_require(is_equal_approx(float(run.career_protocol_progress), 10.0), "SRE root-cause closes replenish 10 error budget")
 			run.career_protocol_progress = 50.0
 			run.career_protocol_cooldown = 0.0
 			player.health = player.max_health * 0.30
@@ -121,6 +207,20 @@ func _test_career_protocol(run: Node, combat: Node, actions: Node, career_id: St
 			run.call("_update_career_protocol", 0.016)
 			_require(float(player.health) > health_before and float(run.career_protocol_progress) < 1.0, "SRE consumes error budget for recovery")
 		"delivery":
+			actions.call("apply_career_upgrade", "delivery_release_burn_down")
+			actions.delivery_support_index = 0
+			actions.ultimate_cooldown_left = 20.0
+			var swarm: Node = run.get_node("SwarmWorld")
+			swarm.call("clear_all")
+			for _enemy_index in range(15):
+				swarm.call("spawn_enemy", SwarmWorld.EnemyKind.BUG, player.global_position + Vector2(120.0, 0.0))
+			_require(bool(actions.call("try_skill", Vector2.RIGHT)), "delivery Q can exercise release burn-down")
+			_require(absf(float(actions.ultimate_cooldown_left) - 18.8) <= 0.001, "delivery Q kill reduction respects the 1.2s per-cast level-one cap")
+			swarm.emit_signal("enemy_closed_by_source", "delivery_r", player.global_position, 0)
+			_require(absf(float(actions.ultimate_cooldown_left) - 18.8) <= 0.001, "delivery R kills never feed their own cooldown loop")
+			for _burn_level in range(4):
+				actions.call("apply_career_upgrade", "delivery_release_burn_down")
+			_require(is_equal_approx(float(actions.call("delivery_q_kill_ultimate_reduction")), 0.36) and is_equal_approx(float(actions.call("delivery_q_cast_ultimate_reduction_cap")), 3.60), "delivery release burn-down grows gradually to its bounded fifth tier")
 			var delivery_rerolls_before := int(run.reroll_charges)
 			run.call("_complete_delivery_milestone")
 			_require(bool(run.career_protocol_triggered) and int(run.reroll_charges) == delivery_rerolls_before + 1, "delivery acceptance milestone grants one review")
@@ -129,4 +229,4 @@ func _test_career_protocol(run: Node, combat: Node, actions: Node, career_id: St
 			actions.signature_timer = 5.0
 			run.career_protocol_count = 19
 			run.call("_career_on_enemy_closed", player.global_position, 0)
-			_require(int(run.career_protocol_count) == 0 and float(actions.signature_timer) == 0.0, "AI Infra close batch primes autoscaling salvo")
+			_require(int(run.career_protocol_count) == 0 and float(actions.signature_timer) == 0.0, "AI Infra close batch primes a KV-cache Tensor cycle")

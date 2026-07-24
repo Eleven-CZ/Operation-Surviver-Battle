@@ -2,9 +2,11 @@ class_name SwarmWorld
 extends Node2D
 
 signal enemy_closed(world_position: Vector2, xp_value: int, enemy_kind: int, tier: int)
+signal enemy_closed_by_source(source_id: String, world_position: Vector2, tier: int)
 signal boss_status_changed(phase: int, health: float, maximum: float)
 signal boss_defeated
 signal elite_skill_cast(skill_name: String, world_position: Vector2, tier: int)
+signal hazard_activated(kind: int, world_position: Vector2, tier: int)
 
 enum EnemyKind {
 	HTTP_404,
@@ -34,6 +36,7 @@ const BG_COLOR := Color("091522")
 const FAULT_SPRITES := preload("res://assets/generated/fault_sprites_4x2.png")
 const UI_FONT := preload("res://assets/fonts/NotoSansSC-VF.ttf")
 const EliteAffixCatalog := preload("res://scripts/elite_affix_catalog.gd")
+const FaultCatalog := preload("res://scripts/fault_catalog.gd")
 
 var player: Node2D
 var count := 0
@@ -51,6 +54,8 @@ var timers := PackedFloat32Array()
 var contact_timers := PackedFloat32Array()
 var states := PackedFloat32Array()
 var slow_timers := PackedFloat32Array()
+var vulnerability_timers := PackedFloat32Array()
+var vulnerability_multipliers := PackedFloat32Array()
 var entity_ids := PackedInt64Array()
 var affix_masks := PackedInt32Array()
 var affix_timers := PackedFloat32Array()
@@ -93,6 +98,8 @@ func _ready() -> void:
 	contact_timers.resize(MAX_ENTITIES)
 	states.resize(MAX_ENTITIES)
 	slow_timers.resize(MAX_ENTITIES)
+	vulnerability_timers.resize(MAX_ENTITIES)
+	vulnerability_multipliers.resize(MAX_ENTITIES)
 	entity_ids.resize(MAX_ENTITIES)
 	affix_masks.resize(MAX_ENTITIES)
 	affix_timers.resize(MAX_ENTITIES)
@@ -158,6 +165,8 @@ func spawn_enemy(kind: int, world_position: Vector2, forced_affix_mask: int = -1
 	contact_timers[count] = 0.0
 	states[count] = 0.0
 	slow_timers[count] = 0.0
+	vulnerability_timers[count] = 0.0
+	vulnerability_multipliers[count] = 1.0
 	entity_ids[count] = next_entity_id
 	next_entity_id += 1
 	affix_masks[count] = 0
@@ -188,6 +197,9 @@ func spawn_enemy(kind: int, world_position: Vector2, forced_affix_mask: int = -1
 		boss_phase = 0
 		boss_status_changed.emit(boss_phase, health[count], maximum_health[count])
 	count += 1
+	var profile_store := get_node_or_null("/root/ProfileStore")
+	if profile_store != null and profile_store.has_method("discover_fault_kind"):
+		profile_store.call("discover_fault_kind", kind)
 	return true
 
 
@@ -416,6 +428,7 @@ func _update_hazards(delta: float) -> void:
 
 func _activate_hazard(hazard: Dictionary) -> void:
 	var kind := int(hazard["kind"])
+	hazard_activated.emit(kind, Vector2(hazard["position"]), int(hazard.get("owner_tier", 0)))
 	if kind == HazardKind.TELEPORT:
 		var owner_index := _find_entity_id(int(hazard["owner_id"]))
 		if owner_index >= 0:
@@ -501,6 +514,9 @@ func _physics_process(delta: float) -> void:
 		contact_timers[index] = maxf(0.0, contact_timers[index] - delta)
 		states[index] = maxf(0.0, states[index] - delta)
 		slow_timers[index] = maxf(0.0, slow_timers[index] - delta)
+		vulnerability_timers[index] = maxf(0.0, vulnerability_timers[index] - delta)
+		if vulnerability_timers[index] <= 0.0:
+			vulnerability_multipliers[index] = 1.0
 		shield_recharge_timers[index] = maxf(0.0, shield_recharge_timers[index] - delta)
 
 		var offset := player.global_position - positions[index]
@@ -599,12 +615,13 @@ func get_nearest_target(origin: Vector2, maximum_range: float) -> Dictionary:
 	}
 
 
-func damage_index(index: int, amount: float) -> bool:
+func damage_index(index: int, amount: float, source_id: String = "") -> bool:
 	if index < 0 or index >= count:
 		return false
 	var kind := kinds[index]
 	if kind == EnemyKind.INCIDENT_CORE and boss_phase != 1:
 		return false
+	amount *= maxf(1.0, vulnerability_multipliers[index])
 	if shield_health[index] > 0.0:
 		var absorbed := minf(shield_health[index], amount)
 		shield_health[index] -= absorbed
@@ -630,18 +647,37 @@ func damage_index(index: int, amount: float) -> bool:
 			boss_defeated.emit()
 		return true
 	if health[index] <= 0.0:
-		_close_enemy(index)
+		_close_enemy(index, source_id)
 	return true
 
 
-func damage_area(center: Vector2, area_radius: float, amount: float) -> int:
+func damage_area(center: Vector2, area_radius: float, amount: float, source_id: String = "") -> int:
 	var hit_count := 0
 	var index := 0
 	var radius_squared := area_radius * area_radius
 	while index < count:
 		if positions[index].distance_squared_to(center) <= radius_squared:
 			var old_count := count
-			if damage_index(index, amount):
+			if damage_index(index, amount, source_id):
+				hit_count += 1
+			if count < old_count:
+				continue
+		index += 1
+	return hit_count
+
+
+func damage_ring(center: Vector2, orbit_radius: float, band_radius: float, amount: float, source_id: String = "") -> int:
+	var hit_count := 0
+	var index := 0
+	while index < count:
+		if kinds[index] == EnemyKind.INCIDENT_CORE and boss_phase != 1:
+			index += 1
+			continue
+		var distance := positions[index].distance_to(center)
+		var allowed_band := band_radius + radii[index] * 0.35
+		if absf(distance - orbit_radius) <= allowed_band:
+			var old_count := count
+			if damage_index(index, amount, source_id):
 				hit_count += 1
 			if count < old_count:
 				continue
@@ -671,7 +707,7 @@ func damage_arc(center: Vector2, forward: Vector2, area_radius: float, half_angl
 	return hit_count
 
 
-func damage_line(start: Vector2, end: Vector2, half_width: float, amount: float, maximum_targets: int = -1) -> Array[Vector2]:
+func damage_line(start: Vector2, end: Vector2, half_width: float, amount: float, maximum_targets: int = -1, source_id: String = "") -> Array[Vector2]:
 	var segment := end - start
 	var segment_length_squared := maxf(0.001, segment.length_squared())
 	var candidates: Array[Dictionary] = []
@@ -695,7 +731,7 @@ func damage_line(start: Vector2, end: Vector2, half_width: float, amount: float,
 	selected_indices.sort()
 	selected_indices.reverse()
 	for selected_index in selected_indices:
-		damage_index(selected_index, amount)
+		damage_index(selected_index, amount, source_id)
 	return hit_positions
 
 
@@ -735,7 +771,22 @@ func slow_area(center: Vector2, area_radius: float, duration: float) -> int:
 	return slowed
 
 
-func damage_nearest_targets(origin: Vector2, maximum_range: float, amount: float, maximum_targets: int, secondary_damage_scale: float = 1.0) -> Array[Vector2]:
+func amplify_damage_area(center: Vector2, area_radius: float, multiplier: float, duration: float) -> int:
+	var amplified := 0
+	var radius_squared := area_radius * area_radius
+	var resolved_multiplier := clampf(multiplier, 1.0, 2.0)
+	for index in range(count):
+		if kinds[index] == EnemyKind.INCIDENT_CORE and boss_phase != 1:
+			continue
+		if positions[index].distance_squared_to(center) > radius_squared:
+			continue
+		vulnerability_timers[index] = maxf(vulnerability_timers[index], duration)
+		vulnerability_multipliers[index] = maxf(vulnerability_multipliers[index], resolved_multiplier)
+		amplified += 1
+	return amplified
+
+
+func damage_nearest_targets(origin: Vector2, maximum_range: float, amount: float, maximum_targets: int, secondary_damage_scale: float = 1.0, source_id: String = "") -> Array[Vector2]:
 	var wanted := maxi(0, maximum_targets)
 	var selected_indices: Array[int] = []
 	var selected_distances: Array[float] = []
@@ -772,7 +823,7 @@ func damage_nearest_targets(origin: Vector2, maximum_range: float, amount: float
 	damage_order.sort_custom(func(a: int, b: int) -> bool: return selected_indices[a] > selected_indices[b])
 	for selected_index in damage_order:
 		var damage_scale := 1.0 if selected_index == 0 else secondary_damage_scale
-		damage_index(selected_indices[selected_index], amount * damage_scale)
+		damage_index(selected_indices[selected_index], amount * damage_scale, source_id)
 	return hit_positions
 
 
@@ -871,7 +922,7 @@ func get_radar_snapshot(maximum_normal: int = 72) -> Dictionary:
 	return {"normal": normal, "elite": elite, "boss": boss}
 
 
-func _close_enemy(index: int) -> void:
+func _close_enemy(index: int, source_id: String = "") -> void:
 	var closed_position := positions[index]
 	var closed_kind := kinds[index]
 	var xp_value := _xp_value(closed_kind)
@@ -881,6 +932,8 @@ func _close_enemy(index: int) -> void:
 		elite_skill_cast.emit("崩溃自爆", closed_position, 1)
 	_remove_at(index)
 	enemy_closed.emit(closed_position, xp_value, closed_kind, tier_value)
+	if not source_id.is_empty():
+		enemy_closed_by_source.emit(source_id, closed_position, tier_value)
 
 
 func _remove_at(index: int) -> void:
@@ -898,6 +951,8 @@ func _remove_at(index: int) -> void:
 	contact_timers[index] = contact_timers[count]
 	states[index] = states[count]
 	slow_timers[index] = slow_timers[count]
+	vulnerability_timers[index] = vulnerability_timers[count]
+	vulnerability_multipliers[index] = vulnerability_multipliers[count]
 	entity_ids[index] = entity_ids[count]
 	affix_masks[index] = affix_masks[count]
 	affix_timers[index] = affix_timers[count]

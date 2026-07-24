@@ -30,6 +30,10 @@ static func all() -> Array[Dictionary]:
 			"ability_cooldown": 1.00,
 			"affix_damage": 1.00,
 			"elite_summon_count": 1,
+			"elite_crystal_count": 4,
+			"elite_crystal_total": 24,
+			"elite_crystal_scale": 1.45,
+			"artifact_drop_chance": 0.50,
 			"boss_summon_count": 1,
 			"elite_wave_start": 90.0,
 			"elite_wave_interval": 120.0,
@@ -73,6 +77,10 @@ static func all() -> Array[Dictionary]:
 			"ability_cooldown": 0.82,
 			"affix_damage": 1.25,
 			"elite_summon_count": 2,
+			"elite_crystal_count": 5,
+			"elite_crystal_total": 30,
+			"elite_crystal_scale": 1.55,
+			"artifact_drop_chance": 0.40,
 			"boss_summon_count": 2,
 			"elite_wave_start": 60.0,
 			"elite_wave_interval": 60.0,
@@ -116,6 +124,10 @@ static func all() -> Array[Dictionary]:
 			"ability_cooldown": 0.62,
 			"affix_damage": 1.65,
 			"elite_summon_count": 3,
+			"elite_crystal_count": 6,
+			"elite_crystal_total": 36,
+			"elite_crystal_scale": 1.65,
+			"artifact_drop_chance": 0.30,
 			"boss_summon_count": 4,
 			"elite_wave_start": 36.0,
 			"elite_wave_interval": 36.0,
@@ -159,6 +171,10 @@ static func all() -> Array[Dictionary]:
 			"ability_cooldown": 0.42,
 			"affix_damage": 2.10,
 			"elite_summon_count": 5,
+			"elite_crystal_count": 7,
+			"elite_crystal_total": 42,
+			"elite_crystal_scale": 1.75,
+			"artifact_drop_chance": 0.20,
 			"boss_summon_count": 8,
 			"elite_wave_start": 30.0,
 			"elite_wave_interval": 15.0,
@@ -206,9 +222,10 @@ static func next_id(difficulty_id: String) -> String:
 
 static func pressure_summary(difficulty_id: String) -> String:
 	var difficulty := get_by_id(difficulty_id)
-	return "敌群 ×%.2f · 普通 HP ×%.1f · 精英 HP ×%.1f · Boss HP ×%.1f" % [
+	return "敌群 ×%.2f · 普通 HP ×%.1f · 精英 HP ×%.1f · Boss HP ×%.1f · 神器掉率 %.0f%%" % [
 		float(difficulty["spawn_rate"]),
 		float(difficulty["normal_health"]),
 		float(difficulty["elite_health"]),
 		float(difficulty["boss_health"]),
+		float(difficulty.get("artifact_drop_chance", 0.0)) * 100.0,
 	]

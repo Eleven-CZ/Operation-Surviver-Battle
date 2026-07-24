@@ -48,21 +48,21 @@ static func all() -> Array[Dictionary]:
 		},
 		{
 			"career_id": "sre",
-			"signature": {"id": "slo_budget_ring", "name": "SLO 预算环", "archetype": "adaptive_ring", "description": "健康时高伤扩张；低健康时切换为恢复与击退。", "cooldown": 1.65, "icon": "redundancy"},
-			"skill": {"id": "traffic_shift", "name": "流量切换", "description": "快速侧移并在起终点留下短时服务保护区。", "cooldown": 11.0, "icon": "rule_chain"},
-			"ultimate": {"id": "budget_freeze", "name": "错误预算冻结", "description": "6 秒冻结失败扩散、持续恢复并强力减速全场。", "cooldown": 56.0, "icon": "redundancy"},
+			"signature": {"id": "critical_path_trace", "name": "关键路径 Trace", "archetype": "trace_replay", "description": "锁定高威胁故障，先采样留下 SPAN，再沿原路径反向回滚并重击根因。", "cooldown": 1.35, "icon": "log"},
+			"skill": {"id": "traffic_shift", "name": "流量切换", "description": "切换到容灾端点，以持续数据链路切割故障并立即触发一次 Trace。", "cooldown": 10.0, "icon": "rule_chain"},
+			"ultimate": {"id": "active_active_takeover", "name": "全站多活", "description": "10 秒启用主站与两处历史容灾站，并行回放 Trace，危急时自动故障转移。", "cooldown": 58.0, "icon": "redundancy"},
 		},
 		{
 			"career_id": "delivery",
 			"signature": {"id": "release_package", "name": "发布包", "archetype": "delayed_aoe", "description": "向敌群投放延迟爆发并留下 UAT 验收区的发布包。", "cooldown": 1.75, "icon": "log"},
-			"skill": {"id": "blue_green_switch", "name": "蓝绿切换", "description": "位移到绿环境；旧蓝环境爆破，新环境提供恢复。", "cooldown": 12.0, "icon": "redundancy"},
-			"ultimate": {"id": "full_release", "name": "全量上线", "description": "10%、30%、100% 三道发布波逐次扩大并横扫全场。", "cooldown": 52.0, "icon": "log"},
+			"skill": {"id": "cross_team_sync", "name": "跨组联调", "description": "默认独立储备 2 次，轮换召集职业剪影投放固有普攻；储备与到场人数均可专项升级。", "cooldown": 10.0, "icon": "runbook"},
+			"ultimate": {"id": "all_hands_delivery", "name": "全员到场", "description": "完整十职业阵容到场，三轮投放各自固有普攻，所有作用范围扩大 50%。", "cooldown": 58.0, "icon": "runbook"},
 		},
 		{
 			"career_id": "ai_infra",
-			"signature": {"id": "worker_formation", "name": "Worker Pod", "archetype": "autonomous_summon", "description": "自主 Pod 环绕编队，并从各自位置同步齐射。", "cooldown": 0.92, "icon": "worker"},
-			"skill": {"id": "pod_migration", "name": "Pod 迁移", "description": "迁移到新算力节点，所有 Pod 收拢并触发爆破。", "cooldown": 11.0, "icon": "worker"},
-			"ultimate": {"id": "gpu_scale_out", "name": "GPU 集群扩容", "description": "10 秒临时增加六个 Worker，并持续执行同步扇形齐射。", "cooldown": 55.0, "icon": "worker"},
+			"signature": {"id": "tensor_pipeline", "name": "Tensor Pipeline", "archetype": "tensor_pipeline", "description": "并行 Token 依次经过 Embedding、Attention、FFN 与 Output；击杀后残差射线自动转交。", "cooldown": 0.90, "icon": "worker"},
+			"skill": {"id": "pipeline_flush", "name": "Pipeline Flush", "description": "冲刷三条并行数据通道，连续执行四阶段贯穿，最后发射三枚 Output Head。", "cooldown": 10.0, "icon": "worker"},
+			"ultimate": {"id": "foundation_model_online", "name": "基础模型上线", "description": "以 Prefill 扫描、加速 Decode 与 EOS 清算完成一次全屏推理，并回收全部经验。", "cooldown": 60.0, "icon": "worker"},
 		},
 	]
 

@@ -11,6 +11,7 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 [autoload]
 
 ProfileStore="*res://scripts/profile_store.gd"
+AudioDirector="*res://scripts/audio_director.gd"
 
 [display]
 

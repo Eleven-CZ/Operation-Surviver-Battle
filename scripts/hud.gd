@@ -3,12 +3,13 @@ extends CanvasLayer
 const CareerCatalog := preload("res://scripts/career_catalog.gd")
 const EventCatalog := preload("res://scripts/event_catalog.gd")
 const DifficultyCatalog := preload("res://scripts/difficulty_catalog.gd")
+const CoworkerCatalog := preload("res://scripts/coworker_catalog.gd")
+const ArtifactCatalog := preload("res://scripts/artifact_catalog.gd")
 const HUD_OVERLAY_TEXTURE := preload("res://assets/generated/combat_hud_overlay.png")
 const SKILL_ICON_TEXTURE := preload("res://assets/generated/skill_icons_5x2.png")
 const COWORKER_SPRITE_TEXTURE := preload("res://assets/generated/coworker_sprites_4x2.png")
 const MiniRadarScript := preload("res://scripts/mini_radar.gd")
 const SKILL_ICON_ORDER: Array[String] = ["bash", "ping", "firewall", "log", "wrench", "rule_chain", "lock_zone", "worker", "runbook", "redundancy"]
-const COWORKER_ORDER: Array[String] = ["hr", "finance", "product", "frontend", "backend", "leader", "customer", "supervisor"]
 
 signal upgrade_selected(upgrade_id: String)
 signal upgrade_reroll_requested
@@ -34,6 +35,29 @@ var event_label: Label
 var build_label: Label
 var performance_label: Label
 var career_icon: TextureRect
+var artifact_panel: PanelContainer
+var artifact_count_label: Label
+var artifact_slot_panels: Array[PanelContainer] = []
+var artifact_slot_icons: Array[TextureRect] = []
+var artifact_slot_badges: Array[Label] = []
+var artifact_slot_names: Array[Label] = []
+var artifact_slot_definitions: Array[Dictionary] = []
+var artifact_reel_panel: PanelContainer
+var artifact_reel_icon_frames: Array[PanelContainer] = []
+var artifact_reel_icons: Array[TextureRect] = []
+var artifact_reel_result: Label
+var artifact_reel_detail: Label
+var artifact_reel_pool: Array[Dictionary] = []
+var artifact_reel_queue: Array[Dictionary] = []
+var artifact_reel_displayed_ids: Array[String] = ["", "", ""]
+var artifact_reel_selected: Dictionary = {}
+var artifact_reel_selected_id := ""
+var artifact_reel_phase := "idle"
+var artifact_reel_elapsed := 0.0
+var artifact_reel_step_left := 0.0
+var artifact_reel_hold_left := 0.0
+var artifact_reel_cursor := 0
+var artifact_reel_duration := 1.65
 var boss_panel: PanelContainer
 var boss_label: Label
 var boss_bar: ProgressBar
@@ -58,9 +82,16 @@ var skill_slot_icons: Array[TextureRect] = []
 var skill_slot_levels: Array[Label] = []
 var radar: Control
 var ally_tracker: Control
+var ally_panel: PanelContainer
 var ally_portrait: TextureRect
+var ally_badge: Label
 var ally_title: Label
+var ally_role: Label
+var ally_skill: Label
+var ally_cooldown: Label
 var ally_status: Label
+var ally_cast_flash_left := 0.0
+var ally_cast_notice_cooldown := 0.0
 var career_skill_slot: Control
 var career_skill_icon: TextureRect
 var career_skill_cover: ColorRect
@@ -158,6 +189,7 @@ func _build_hud() -> void:
 	career_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	career_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	career_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_build_artifact_slots()
 
 	event_label = _make_label("", 18, Color("ffd05a"))
 	root_control.add_child(event_label)
@@ -306,13 +338,85 @@ func _build_hud() -> void:
 	feedback_box.add_child(feedback_title)
 	feedback_box.add_child(feedback_detail)
 	feedback_panel.hide()
+	_build_artifact_reel()
 
 	feedback_audio = AudioStreamPlayer.new()
 	add_child(feedback_audio)
+	feedback_audio.bus = &"UI"
 	feedback_audio.stream = _build_upgrade_chime_stream()
 
 
+func _build_artifact_reel() -> void:
+	artifact_reel_panel = PanelContainer.new()
+	root_control.add_child(artifact_reel_panel)
+	artifact_reel_panel.position = Vector2(340, 154)
+	artifact_reel_panel.custom_minimum_size = Vector2(600, 350)
+	artifact_reel_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	artifact_reel_panel.pivot_offset = Vector2(300, 175)
+	artifact_reel_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.018, 0.038, 0.055, 0.98), Color("ffcf5a")))
+	var margin := MarginContainer.new()
+	artifact_reel_panel.add_child(margin)
+	margin.add_theme_constant_override("margin_left", 22)
+	margin.add_theme_constant_override("margin_right", 22)
+	margin.add_theme_constant_override("margin_top", 16)
+	margin.add_theme_constant_override("margin_bottom", 18)
+	var box := VBoxContainer.new()
+	margin.add_child(box)
+	box.add_theme_constant_override("separation", 9)
+	var marquee := _make_label("◆  JACKPOT · 神器协议掉落  ◆", 20, Color("ffe77a"))
+	marquee.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(marquee)
+	var lamps := _make_label("●  ●  ●  ●  ●  ●  ●  ●  ●  ●  ●", 11, Color("ff9b62"))
+	lamps.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(lamps)
+	var reel_row := HBoxContainer.new()
+	reel_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	reel_row.add_theme_constant_override("separation", 12)
+	box.add_child(reel_row)
+	for slot_index in range(3):
+		var frame := PanelContainer.new()
+		reel_row.add_child(frame)
+		frame.custom_minimum_size = Vector2(142, 142)
+		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var border := Color("ffd36a") if slot_index == 1 else Color("5a7580")
+		frame.add_theme_stylebox_override("panel", _panel_style(Color("050b10"), border))
+		var frame_margin := MarginContainer.new()
+		frame.add_child(frame_margin)
+		for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+			frame_margin.add_theme_constant_override(side, 8)
+		var icon := TextureRect.new()
+		frame_margin.add_child(icon)
+		icon.custom_minimum_size = Vector2(124, 124)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		icon.pivot_offset = Vector2(62, 62)
+		artifact_reel_icon_frames.append(frame)
+		artifact_reel_icons.append(icon)
+	var selector := _make_label("▲  最终协议  ▲", 12, Color("ffcf5a"))
+	selector.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(selector)
+	artifact_reel_result = _make_label("正在扫描精英掉落池……", 22, Color("fff1b8"))
+	artifact_reel_result.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	artifact_reel_result.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	box.add_child(artifact_reel_result)
+	artifact_reel_detail = _make_label("协议滚轮将在确认后停止", 13, Color("9db6c0"))
+	artifact_reel_detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	artifact_reel_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	artifact_reel_detail.custom_minimum_size = Vector2(540, 42)
+	box.add_child(artifact_reel_detail)
+	artifact_reel_panel.hide()
+
+
 func _process(delta: float) -> void:
+	ally_cast_notice_cooldown = maxf(0.0, ally_cast_notice_cooldown - delta)
+	if ally_cast_flash_left > 0.0:
+		ally_cast_flash_left = maxf(0.0, ally_cast_flash_left - delta)
+		var pulse := 1.0 + sin(ally_cast_flash_left * 18.0) * 0.025
+		ally_tracker.scale = Vector2.ONE * pulse
+		if ally_cast_flash_left <= 0.0:
+			ally_tracker.scale = Vector2.ONE
+	_update_artifact_reel(delta)
 	if feedback_left <= 0.0:
 		return
 	feedback_left = maxf(0.0, feedback_left - delta)
@@ -360,6 +464,73 @@ func _build_skill_tray() -> void:
 		level_label.add_theme_constant_override("shadow_offset_x", 1)
 		level_label.add_theme_constant_override("shadow_offset_y", 1)
 		skill_slot_levels.append(level_label)
+
+
+func _build_artifact_slots() -> void:
+	artifact_panel = PanelContainer.new()
+	root_control.add_child(artifact_panel)
+	# Build summaries can grow to seven lines once architectures, meta growth,
+	# and artifacts are present. Keep these slots below that dynamic panel.
+	artifact_panel.position = Vector2(18, 318)
+	artifact_panel.custom_minimum_size = Vector2(390, 88)
+	artifact_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.035, 0.045, 0.055, 0.88), Color(0.72, 0.52, 0.18, 0.68)))
+	var margin := MarginContainer.new()
+	artifact_panel.add_child(margin)
+	margin.add_theme_constant_override("margin_left", 9)
+	margin.add_theme_constant_override("margin_right", 9)
+	margin.add_theme_constant_override("margin_top", 6)
+	margin.add_theme_constant_override("margin_bottom", 7)
+	var box := VBoxContainer.new()
+	margin.add_child(box)
+	box.add_theme_constant_override("separation", 4)
+	artifact_count_label = _make_label("神器协议  0 / 2", 11, Color("d7b45b"))
+	box.add_child(artifact_count_label)
+	var row := HBoxContainer.new()
+	box.add_child(row)
+	row.add_theme_constant_override("separation", 8)
+	for slot_index in range(2):
+		var slot_panel := PanelContainer.new()
+		row.add_child(slot_panel)
+		slot_panel.custom_minimum_size = Vector2(177, 48)
+		slot_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slot_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+		slot_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.018, 0.032, 0.042, 0.94), Color("425d68")))
+		var slot_margin := MarginContainer.new()
+		slot_panel.add_child(slot_margin)
+		slot_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		slot_margin.add_theme_constant_override("margin_left", 8)
+		slot_margin.add_theme_constant_override("margin_right", 8)
+		slot_margin.add_theme_constant_override("margin_top", 5)
+		slot_margin.add_theme_constant_override("margin_bottom", 5)
+		var slot_row := HBoxContainer.new()
+		slot_margin.add_child(slot_row)
+		slot_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		slot_row.add_theme_constant_override("separation", 7)
+		var icon := TextureRect.new()
+		slot_row.add_child(icon)
+		icon.custom_minimum_size = Vector2(36, 36)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.modulate = Color(0.45, 0.56, 0.61, 0.28)
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var badge := _make_label("◇", 20, Color("607986"))
+		slot_row.add_child(badge)
+		badge.custom_minimum_size = Vector2.ZERO
+		badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		badge.hide()
+		var name := _make_label("空神器槽", 12, Color("718b96"))
+		slot_row.add_child(name)
+		name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		name.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		slot_panel.tooltip_text = "神器槽 %d\n尚未接入神器" % (slot_index + 1)
+		artifact_slot_panels.append(slot_panel)
+		artifact_slot_icons.append(icon)
+		artifact_slot_badges.append(badge)
+		artifact_slot_names.append(name)
 
 
 func _build_career_action_slots() -> void:
@@ -441,29 +612,60 @@ func _make_career_action_slot(position_value: Vector2, slot_size: Vector2, borde
 func _build_ally_tracker() -> void:
 	ally_tracker = Control.new()
 	root_control.add_child(ally_tracker)
-	ally_tracker.position = Vector2(1190, 267)
-	ally_tracker.size = Vector2(72, 182)
+	ally_tracker.position = Vector2(1018, 267)
+	ally_tracker.size = Vector2(244, 174)
 	ally_tracker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ally_panel = PanelContainer.new()
+	ally_tracker.add_child(ally_panel)
+	ally_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ally_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ally_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.055, 0.075, 0.95), Color("4e7c88")))
 	ally_portrait = TextureRect.new()
 	ally_tracker.add_child(ally_portrait)
-	ally_portrait.position = Vector2(7, 2)
-	ally_portrait.size = Vector2(58, 88)
+	ally_portrait.position = Vector2(166, 9)
+	ally_portrait.size = Vector2(70, 102)
 	ally_portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	ally_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	ally_portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ally_badge = _make_label("PM", 11, Color("ef74dd"))
+	ally_tracker.add_child(ally_badge)
+	ally_badge.position = Vector2(174, 7)
+	ally_badge.size = Vector2(54, 20)
+	ally_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ally_badge.add_theme_constant_override("outline_size", 4)
+	ally_badge.add_theme_color_override("font_outline_color", Color("061018"))
 	ally_title = _make_label("协作席位", 10, Color("b7d1d8"))
 	ally_tracker.add_child(ally_title)
-	ally_title.position = Vector2(1, 94)
-	ally_title.size = Vector2(70, 38)
-	ally_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ally_title.position = Vector2(12, 10)
+	ally_title.size = Vector2(145, 24)
 	ally_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	ally_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	ally_title.add_theme_constant_override("outline_size", 3)
 	ally_title.add_theme_color_override("font_outline_color", Color("061018"))
+	ally_role = _make_label("协作能力待接入", 10, Color("8eaab5"))
+	ally_tracker.add_child(ally_role)
+	ally_role.position = Vector2(12, 37)
+	ally_role.size = Vector2(145, 39)
+	ally_role.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ally_role.add_theme_constant_override("outline_size", 3)
+	ally_role.add_theme_color_override("font_outline_color", Color("061018"))
+	ally_skill = _make_label("能力待对齐", 12, Color("ef74dd"))
+	ally_tracker.add_child(ally_skill)
+	ally_skill.position = Vector2(12, 82)
+	ally_skill.size = Vector2(145, 38)
+	ally_skill.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ally_skill.add_theme_constant_override("outline_size", 3)
+	ally_skill.add_theme_color_override("font_outline_color", Color("061018"))
+	ally_cooldown = _make_label("化解后自动施放", 10, Color("7899a5"))
+	ally_tracker.add_child(ally_cooldown)
+	ally_cooldown.position = Vector2(12, 128)
+	ally_cooldown.size = Vector2(145, 26)
+	ally_cooldown.add_theme_constant_override("outline_size", 3)
+	ally_cooldown.add_theme_color_override("font_outline_color", Color("061018"))
 	ally_status = _make_label("", 10, Color("ef74dd"))
 	ally_tracker.add_child(ally_status)
-	ally_status.position = Vector2(1, 136)
-	ally_status.size = Vector2(70, 24)
+	ally_status.position = Vector2(164, 126)
+	ally_status.size = Vector2(72, 30)
 	ally_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	ally_status.add_theme_constant_override("outline_size", 3)
 	ally_status.add_theme_color_override("font_outline_color", Color("061018"))
@@ -490,6 +692,66 @@ func configure_difficulty(config: Dictionary) -> void:
 
 func update_build(summary: String) -> void:
 	build_label.text = summary
+
+
+func update_artifact_slots(definitions: Array) -> void:
+	artifact_slot_definitions.clear()
+	for value in definitions:
+		if artifact_slot_definitions.size() >= 2:
+			break
+		if value is Dictionary:
+			artifact_slot_definitions.append(Dictionary(value).duplicate(true))
+	artifact_count_label.text = "神器协议  %d / 2" % artifact_slot_definitions.size()
+	for slot_index in range(artifact_slot_panels.size()):
+		var panel := artifact_slot_panels[slot_index]
+		var icon := artifact_slot_icons[slot_index]
+		var badge := artifact_slot_badges[slot_index]
+		var name := artifact_slot_names[slot_index]
+		if slot_index >= artifact_slot_definitions.size():
+			icon.texture = null
+			icon.modulate = Color(0.45, 0.56, 0.61, 0.28)
+			badge.text = "◇"
+			badge.add_theme_color_override("font_color", Color("607986"))
+			name.text = "空神器槽"
+			name.add_theme_color_override("font_color", Color("718b96"))
+			panel.tooltip_text = "神器槽 %d\n尚未接入神器" % (slot_index + 1)
+			panel.add_theme_stylebox_override("panel", _panel_style(Color(0.018, 0.032, 0.042, 0.94), Color("425d68")))
+			continue
+		var definition := artifact_slot_definitions[slot_index]
+		var color_value: Variant = definition.get("color", "ffd45e")
+		var accent: Color = color_value if color_value is Color else Color(String(color_value))
+		var artifact_name := String(definition.get("name", definition.get("id", "未命名神器")))
+		var artifact_badge := String(definition.get("badge", definition.get("icon", "◆")))
+		var description := String(definition.get("description", definition.get("effect", definition.get("summary", "神器效果已生效"))))
+		icon.texture = ArtifactCatalog.icon_texture(String(definition.get("id", "")))
+		icon.modulate = Color.WHITE
+		badge.text = artifact_badge if not artifact_badge.is_empty() else "◆"
+		badge.add_theme_color_override("font_color", accent.lightened(0.16))
+		name.text = artifact_name
+		name.add_theme_color_override("font_color", Color("fff2c2"))
+		panel.tooltip_text = "%s  ·  %s\n%s" % [badge.text, artifact_name, description]
+		panel.add_theme_stylebox_override("panel", _panel_style(Color(0.09, 0.065, 0.018, 0.96), accent))
+
+
+func get_artifact_ui_snapshot() -> Dictionary:
+	var slots: Array[Dictionary] = []
+	for slot_index in range(artifact_slot_panels.size()):
+		var occupied := slot_index < artifact_slot_definitions.size()
+		slots.append({
+			"occupied": occupied,
+			"id": String(artifact_slot_definitions[slot_index].get("id", "")) if occupied else "",
+			"name": artifact_slot_names[slot_index].text,
+			"badge": artifact_slot_badges[slot_index].text,
+			"tooltip": artifact_slot_panels[slot_index].tooltip_text,
+		})
+	return {
+		"visible": artifact_panel != null and artifact_panel.visible,
+		"count": artifact_slot_definitions.size(),
+		"capacity": artifact_slot_panels.size(),
+		"position": artifact_panel.position if artifact_panel != null else Vector2.ZERO,
+		"size": artifact_panel.size if artifact_panel != null else Vector2.ZERO,
+		"slots": slots,
+	}
 
 
 func update_skill_loadout(loadout: Array[Dictionary]) -> void:
@@ -519,14 +781,23 @@ func update_career_actions(snapshot: Dictionary) -> void:
 	if skill_id != last_skill_action_id:
 		last_skill_action_id = skill_id
 		career_skill_icon.texture = _skill_icon(String(skill.get("icon", "wrench")))
-		career_skill_name.text = String(skill.get("name", "职业小技能"))
-		career_skill_button.tooltip_text = "%s\n%s\n冷却 %.0f 秒" % [skill.get("name", "职业小技能"), skill.get("description", ""), float(skill.get("cooldown", 0.0))]
 	if ultimate_id != last_ultimate_action_id:
 		last_ultimate_action_id = ultimate_id
 		career_ultimate_icon.texture = CareerCatalog.emblem_texture(String(snapshot.get("career_id", "ops")))
-		career_ultimate_name.text = String(ultimate.get("name", "职业大招"))
-		career_ultimate_button.tooltip_text = "%s\n%s\n冷却 %.0f 秒" % [ultimate.get("name", "职业大招"), ultimate.get("description", ""), float(ultimate.get("cooldown", 0.0))]
-	_update_action_cooldown(career_skill_slot, career_skill_cover, career_skill_cooldown, career_skill_button, float(skill.get("remaining", 0.0)), float(skill.get("cooldown", 1.0)), career_action_accent)
+	career_skill_name.text = String(skill.get("name", "职业小技能"))
+	career_ultimate_name.text = String(ultimate.get("name", "职业大招"))
+	# Cooldown growth and artifacts can change the effective values without
+	# changing the action id, so refresh both tooltips every frame.
+	career_skill_button.tooltip_text = "%s\n%s\n当前冷却 %.1f 秒" % [skill.get("name", "职业小技能"), skill.get("description", ""), float(skill.get("cooldown", 0.0))]
+	career_ultimate_button.tooltip_text = "%s\n%s\n当前冷却 %.1f 秒" % [ultimate.get("name", "职业大招"), ultimate.get("description", ""), float(ultimate.get("cooldown", 0.0))]
+	var maximum_charges := int(skill.get("max_charges", 1))
+	if maximum_charges > 1:
+		var charges := int(skill.get("charges", 0))
+		var recharge_remaining := float(skill.get("recharge_remaining", 0.0))
+		career_skill_button.tooltip_text += "\n储备 %d / %d%s" % [charges, maximum_charges, " · 下一层 %.1fs" % recharge_remaining if recharge_remaining > 0.01 else ""]
+		_update_action_charges(career_skill_slot, career_skill_cover, career_skill_cooldown, career_skill_button, charges, maximum_charges, recharge_remaining, float(skill.get("cooldown", 1.0)), career_action_accent)
+	else:
+		_update_action_cooldown(career_skill_slot, career_skill_cover, career_skill_cooldown, career_skill_button, float(skill.get("remaining", 0.0)), float(skill.get("cooldown", 1.0)), career_action_accent)
 	_update_action_cooldown(career_ultimate_slot, career_ultimate_cover, career_ultimate_cooldown, career_ultimate_button, float(ultimate.get("remaining", 0.0)), float(ultimate.get("cooldown", 1.0)), Color("ffd36a"))
 
 
@@ -539,6 +810,17 @@ func _update_action_cooldown(slot: Control, cover: ColorRect, label: Label, butt
 	label.text = str(ceili(remaining)) if remaining > 0.01 else "READY"
 	label.add_theme_color_override("font_color", Color("d9e7eb") if remaining > 0.01 else ready_color.lightened(0.18))
 	button.disabled = remaining > 0.01
+
+
+func _update_action_charges(slot: Control, cover: ColorRect, label: Label, button: Button, charges: int, maximum_charges: int, remaining: float, maximum: float, ready_color: Color) -> void:
+	var inner_height := slot.size.y - 14.0
+	var ratio := clampf(remaining / maxf(0.001, maximum), 0.0, 1.0)
+	cover.position = Vector2(7, 7 + inner_height * (1.0 - ratio))
+	cover.size = Vector2(slot.size.x - 14.0, inner_height * ratio)
+	cover.visible = charges <= 0 and remaining > 0.01
+	label.text = "%d/%d" % [charges, maximum_charges]
+	label.add_theme_color_override("font_color", ready_color.lightened(0.18) if charges > 0 else Color("d9e7eb"))
+	button.disabled = charges <= 0
 
 
 func get_action_ui_snapshot() -> Dictionary:
@@ -560,8 +842,18 @@ func update_radar(player_position: Vector2, snapshot: Dictionary) -> void:
 
 
 func show_pressure_persona(persona_id: String, display_name: String, allied: bool = false) -> void:
+	var definition := CoworkerCatalog.get_by_id(persona_id)
+	var accent := CoworkerCatalog.color_for(persona_id)
 	ally_portrait.texture = _coworker_portrait(persona_id)
 	ally_title.text = display_name
+	ally_badge.text = String(definition.get("badge", "ALLY"))
+	ally_badge.add_theme_color_override("font_color", accent)
+	ally_role.text = String(definition.get("role", "协作"))
+	ally_skill.text = String(definition.get("ability", "协作能力"))
+	ally_skill.add_theme_color_override("font_color", accent)
+	ally_cooldown.text = "自动施放 · CD %.1fs" % float(definition.get("cooldown", 8.0)) if allied else "化解后自动施放"
+	ally_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.055, 0.075, 0.95), accent.darkened(0.18)))
+	ally_tracker.tooltip_text = "%s · %s\n%s" % [definition.get("role", "协作"), definition.get("ability", "协作能力"), definition.get("description", "")]
 	ally_portrait.modulate = Color(0.70, 1.0, 0.86, 1.0) if allied else Color(1.0, 0.78, 0.98, 1.0)
 	ally_status.text = "● 盟友" if allied else "◆ 压力"
 	ally_status.add_theme_color_override("font_color", Color("58efc0") if allied else Color("ef74dd"))
@@ -574,6 +866,48 @@ func set_pressure_persona_allied(allied: bool) -> void:
 	ally_portrait.modulate = Color(0.70, 1.0, 0.86, 1.0) if allied else Color(1.0, 0.78, 0.98, 1.0)
 	ally_status.text = "● 盟友" if allied else "◆ 压力"
 	ally_status.add_theme_color_override("font_color", Color("58efc0") if allied else Color("ef74dd"))
+
+
+func update_ally_support(snapshot: Dictionary) -> void:
+	if snapshot.is_empty() or not bool(snapshot.get("active", false)) or not ally_tracker.visible:
+		return
+	var accent_value: Variant = snapshot.get("color", Color("55e7c2"))
+	var accent: Color = accent_value if accent_value is Color else Color(String(accent_value))
+	ally_skill.text = String(snapshot.get("ability", "协作能力"))
+	ally_skill.add_theme_color_override("font_color", accent)
+	if ally_cast_flash_left <= 0.0:
+		ally_role.text = "%s · 威力 ×%.2f" % [String(snapshot.get("role", "协作")), float(snapshot.get("power_scale", 1.0))]
+	var remaining := float(snapshot.get("remaining", 0.0))
+	var cooldown := maxf(0.01, float(snapshot.get("cooldown", 1.0)))
+	ally_cooldown.text = "READY" if remaining <= 0.01 else "冷却 %.1fs / %.1fs" % [remaining, cooldown]
+	ally_cooldown.add_theme_color_override("font_color", accent.lightened(0.18) if remaining <= 0.01 else Color("9ab3bd"))
+	ally_status.text = "● 盟友\n触发 ×%d" % int(snapshot.get("trigger_count", 0))
+	ally_status.add_theme_color_override("font_color", Color("58efc0"))
+	ally_tracker.tooltip_text = "%s · %s\n%s\n最近：%s" % [snapshot.get("role", "协作"), snapshot.get("ability", "协作能力"), snapshot.get("description", ""), snapshot.get("last_detail", "待命")]
+
+
+func show_ally_ability(ability_name: String, detail: String, color: Color) -> void:
+	if not ally_tracker.visible or ally_cast_notice_cooldown > 0.0:
+		return
+	ally_skill.text = "触发 · " + ability_name
+	ally_skill.add_theme_color_override("font_color", color.lightened(0.18))
+	ally_role.text = detail
+	ally_role.add_theme_color_override("font_color", Color("ecf9f4"))
+	ally_cast_flash_left = 1.35
+	ally_cast_notice_cooldown = 3.2
+
+
+func get_ally_ui_snapshot() -> Dictionary:
+	return {
+		"visible": ally_tracker != null and ally_tracker.visible,
+		"title": ally_title.text if ally_title != null else "",
+		"badge": ally_badge.text if ally_badge != null else "",
+		"role": ally_role.text if ally_role != null else "",
+		"ability": ally_skill.text if ally_skill != null else "",
+		"cooldown": ally_cooldown.text if ally_cooldown != null else "",
+		"status": ally_status.text if ally_status != null else "",
+		"tooltip": ally_tracker.tooltip_text if ally_tracker != null else "",
+	}
 
 
 func configure_career(career: Dictionary) -> void:
@@ -591,6 +925,142 @@ func configure_career(career: Dictionary) -> void:
 func update_career_protocol(text: String, color: Color = Color("ffd36a")) -> void:
 	career_protocol_label.text = text
 	career_protocol_label.add_theme_color_override("font_color", color)
+
+
+func show_artifact_reel(selected_definition: Dictionary, pool_values: Array) -> void:
+	if selected_definition.is_empty():
+		return
+	var pool: Array[Dictionary] = []
+	for value in pool_values:
+		if value is Dictionary:
+			pool.append(Dictionary(value).duplicate(true))
+	var selected_id := String(selected_definition.get("id", ""))
+	var contains_selected := false
+	for definition in pool:
+		if String(definition.get("id", "")) == selected_id:
+			contains_selected = true
+			break
+	if not contains_selected:
+		pool.append(selected_definition.duplicate(true))
+	var package := {
+		"selected": selected_definition.duplicate(true),
+		"pool": pool,
+	}
+	if artifact_reel_phase != "idle":
+		artifact_reel_queue.append(package)
+		return
+	_start_artifact_reel(package)
+
+
+func _start_artifact_reel(package: Dictionary) -> void:
+	artifact_reel_selected = Dictionary(package.get("selected", {})).duplicate(true)
+	artifact_reel_selected_id = String(artifact_reel_selected.get("id", ""))
+	artifact_reel_pool.clear()
+	for value in package.get("pool", []):
+		if value is Dictionary:
+			artifact_reel_pool.append(Dictionary(value).duplicate(true))
+	if artifact_reel_pool.is_empty():
+		artifact_reel_pool.append(artifact_reel_selected.duplicate(true))
+	artifact_reel_phase = "spinning"
+	artifact_reel_elapsed = 0.0
+	artifact_reel_step_left = 0.0
+	artifact_reel_hold_left = 0.0
+	artifact_reel_cursor = 0
+	artifact_reel_result.text = "正在扫描精英掉落池……"
+	artifact_reel_result.add_theme_color_override("font_color", Color("fff1b8"))
+	artifact_reel_detail.text = "协议滚轮高速轮询中"
+	var accent := Color(String(artifact_reel_selected.get("color", "ffd36a")))
+	artifact_reel_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.018, 0.038, 0.055, 0.98), accent))
+	artifact_reel_panel.modulate = Color.WHITE
+	artifact_reel_panel.scale = Vector2.ONE * 0.92
+	artifact_reel_panel.show()
+	_update_artifact_reel_icons()
+
+
+func _update_artifact_reel(delta: float) -> void:
+	if artifact_reel_phase == "idle" or artifact_reel_panel == null:
+		return
+	if artifact_reel_phase == "spinning":
+		artifact_reel_elapsed += delta
+		artifact_reel_step_left -= delta
+		var progress := clampf(artifact_reel_elapsed / artifact_reel_duration, 0.0, 1.0)
+		artifact_reel_panel.scale = Vector2.ONE * lerpf(0.92, 1.0, clampf(progress / 0.16, 0.0, 1.0))
+		if artifact_reel_step_left <= 0.0:
+			artifact_reel_cursor += 1
+			artifact_reel_step_left = lerpf(0.055, 0.22, pow(progress, 1.8))
+			_update_artifact_reel_icons()
+		for slot_index in range(artifact_reel_icons.size()):
+			var stagger := sin(artifact_reel_elapsed * 22.0 + float(slot_index) * 1.7)
+			artifact_reel_icons[slot_index].scale = Vector2(1.0, 0.90 + absf(stagger) * 0.10)
+			artifact_reel_icons[slot_index].modulate.a = 0.66 + absf(stagger) * 0.34
+		if artifact_reel_elapsed >= artifact_reel_duration:
+			_finalize_artifact_reel()
+		return
+	artifact_reel_hold_left = maxf(0.0, artifact_reel_hold_left - delta)
+	var center_pulse := 1.0 + sin(artifact_reel_hold_left * 14.0) * 0.025
+	artifact_reel_icons[1].scale = Vector2.ONE * center_pulse
+	if artifact_reel_hold_left > 0.0:
+		return
+	artifact_reel_panel.hide()
+	artifact_reel_phase = "idle"
+	if not artifact_reel_queue.is_empty():
+		var next_package: Dictionary = artifact_reel_queue.pop_front()
+		_start_artifact_reel(next_package)
+
+
+func _update_artifact_reel_icons() -> void:
+	if artifact_reel_pool.is_empty():
+		return
+	for slot_index in range(artifact_reel_icons.size()):
+		var definition := artifact_reel_pool[(artifact_reel_cursor + slot_index * 3) % artifact_reel_pool.size()]
+		_set_artifact_reel_icon(slot_index, definition, false)
+
+
+func _finalize_artifact_reel() -> void:
+	artifact_reel_phase = "result"
+	artifact_reel_hold_left = 1.75
+	var selected_index := 0
+	for index in range(artifact_reel_pool.size()):
+		if String(artifact_reel_pool[index].get("id", "")) == artifact_reel_selected_id:
+			selected_index = index
+			break
+	var left_index := (selected_index - 1 + artifact_reel_pool.size()) % artifact_reel_pool.size()
+	var right_index := (selected_index + 1) % artifact_reel_pool.size()
+	_set_artifact_reel_icon(0, artifact_reel_pool[left_index], false)
+	_set_artifact_reel_icon(1, artifact_reel_selected, true)
+	_set_artifact_reel_icon(2, artifact_reel_pool[right_index], false)
+	var accent := Color(String(artifact_reel_selected.get("color", "ffd36a")))
+	artifact_reel_result.text = String(artifact_reel_selected.get("name", artifact_reel_selected_id))
+	artifact_reel_result.add_theme_color_override("font_color", accent.lightened(0.18))
+	artifact_reel_detail.text = "%s\n靠近拾取 · 每局最多安装 2 件神器" % String(artifact_reel_selected.get("description", "神器协议已确认"))
+	if DisplayServer.get_name() != "headless" and not OS.get_cmdline_user_args().has("--smoke-test"):
+		_play_upgrade_chime()
+
+
+func _set_artifact_reel_icon(slot_index: int, definition: Dictionary, selected: bool) -> void:
+	if slot_index < 0 or slot_index >= artifact_reel_icons.size():
+		return
+	var artifact_id := String(definition.get("id", ""))
+	var accent := Color(String(definition.get("color", "ffd36a")))
+	artifact_reel_displayed_ids[slot_index] = artifact_id
+	artifact_reel_icons[slot_index].texture = ArtifactCatalog.icon_texture(artifact_id)
+	artifact_reel_icons[slot_index].modulate = Color.WHITE if selected else Color(0.76, 0.82, 0.86, 0.78)
+	artifact_reel_icons[slot_index].scale = Vector2.ONE
+	artifact_reel_icon_frames[slot_index].add_theme_stylebox_override(
+		"panel",
+		_panel_style(Color("050b10"), Color("fff1a8") if selected else accent.darkened(0.38))
+	)
+
+
+func get_artifact_reel_snapshot() -> Dictionary:
+	return {
+		"visible": artifact_reel_panel != null and artifact_reel_panel.visible,
+		"phase": artifact_reel_phase,
+		"selected_id": artifact_reel_selected_id,
+		"displayed_ids": artifact_reel_displayed_ids.duplicate(),
+		"queue": artifact_reel_queue.size(),
+		"result": artifact_reel_result.text if artifact_reel_result != null else "",
+	}
 
 
 func show_stack_feedback(title: String, detail: String, accent: Color) -> void:
@@ -721,7 +1191,7 @@ func show_upgrade(choices: Array[Dictionary], build_summary: String = "", reroll
 	_clear_modal()
 	modal_mode = "upgrade"
 	var is_architecture := architecture_step > 0
-	var eyebrow := _make_label("ARCHITECTURE DECISION  %d / 2" % architecture_step if is_architecture else "CHANGE WINDOW  ·  三选一构筑强化", 13, Color("8aa9bb"))
+	var eyebrow := _make_label("ARCHITECTURE DECISION  %d / 2" % architecture_step if is_architecture else "CHANGE WINDOW  ·  全池随机三选一", 13, Color("8aa9bb"))
 	eyebrow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	modal_box.add_child(eyebrow)
 	var title := _make_label("选择岗位架构" if is_architecture else "选择一项变更", 27, Color("ffd36a") if is_architecture else Color("75f3df"))
@@ -756,7 +1226,7 @@ func show_upgrade(choices: Array[Dictionary], build_summary: String = "", reroll
 	reroll_button.disabled = rerolls <= 0
 	reroll_button.pressed.connect(func() -> void: upgrade_reroll_requested.emit())
 	footer.add_child(reroll_button)
-	var footer_hint := _make_label("新技能受常规槽限制；架构签名技能不占槽位", 12, Color("738f9d"))
+	var footer_hint := _make_label("新工具受常规槽限制；固有普攻成长与架构签名不占槽位", 12, Color("738f9d"))
 	footer.add_child(footer_hint)
 	overlay.show()
 	if first_button != null:
@@ -1011,7 +1481,7 @@ func _make_event_strategy_card(event_data: Dictionary, strategy: Dictionary) -> 
 	button.set_meta("event_strategy_card", true)
 	button.set_meta("event_id", event_id)
 	button.set_meta("strategy_id", strategy_id)
-	button.custom_minimum_size = Vector2(342, 286)
+	button.custom_minimum_size = Vector2(342, 310)
 	button.clip_contents = true
 	button.focus_mode = Control.FOCUS_ALL
 	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
@@ -1020,7 +1490,8 @@ func _make_event_strategy_card(event_data: Dictionary, strategy: Dictionary) -> 
 	button.add_theme_stylebox_override("focus", _upgrade_card_style(Color("172a38"), accent.lightened(0.22), 4))
 	button.add_theme_stylebox_override("pressed", _upgrade_card_style(Color("0b151f"), accent, 4))
 	button.pressed.connect(_on_event_strategy_button.bind(event_id, strategy_id))
-	button.tooltip_text = "%s\n%s" % [strategy.get("name", strategy_id), strategy.get("detail", event_data.get("objective", ""))]
+	var persona := CoworkerCatalog.get_by_id(String(strategy.get("persona_id", "product")))
+	button.tooltip_text = "%s\n%s\n协作对象：%s / %s" % [strategy.get("name", strategy_id), strategy.get("detail", event_data.get("objective", "")), persona.get("name", "协作伙伴"), persona.get("ability", "协作能力")]
 
 	var margin := MarginContainer.new()
 	button.add_child(margin)
@@ -1053,6 +1524,12 @@ func _make_event_strategy_card(event_data: Dictionary, strategy: Dictionary) -> 
 	detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	detail.custom_minimum_size = Vector2(300, 58)
 	box.add_child(detail)
+	var collaborator_color := CoworkerCatalog.color_for(String(persona.get("id", "product")))
+	var collaborator := _make_label("协作对象 · %s / %s" % [persona.get("name", "协作伙伴"), persona.get("ability", "协作能力")], 12, collaborator_color)
+	collaborator.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	collaborator.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	collaborator.custom_minimum_size = Vector2(300, 24)
+	box.add_child(collaborator)
 	var divider := HSeparator.new()
 	divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	box.add_child(divider)
@@ -1304,9 +1781,7 @@ func _skill_icon(skill_id: String) -> Texture2D:
 
 
 func _coworker_portrait(persona_id: String) -> Texture2D:
-	var index := COWORKER_ORDER.find(persona_id)
-	if index < 0:
-		index = COWORKER_ORDER.find("product")
+	var index := clampi(int(CoworkerCatalog.get_by_id(persona_id).get("sprite_index", 2)), 0, 7)
 	var columns := 4
 	var cell_size := Vector2(float(COWORKER_SPRITE_TEXTURE.get_width()) / float(columns), float(COWORKER_SPRITE_TEXTURE.get_height()) / 2.0)
 	var atlas := AtlasTexture.new()

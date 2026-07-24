@@ -3,21 +3,27 @@ extends Node2D
 const CareerCatalog := preload("res://scripts/career_catalog.gd")
 const EventCatalog := preload("res://scripts/event_catalog.gd")
 const DifficultyCatalog := preload("res://scripts/difficulty_catalog.gd")
+const ArtifactCatalog := preload("res://scripts/artifact_catalog.gd")
 const UI_FONT := preload("res://assets/fonts/NotoSansSC-VF.ttf")
 const RUN_DURATION := 360.0
 const MAX_GAMEPLAY_ENEMIES := 600
 const REGULAR_COMBAT_SLOT_CAP := 4
 const ARCHITECTURE_LEVELS: Array[int] = [3, 7]
+const INFINITE_GROWTH_CAP := 2_147_483_647
+const ARTIFACT_SLOT_CAP := 2
 
 @onready var player: CharacterBody2D = $Player
 @onready var swarm: Node2D = $SwarmWorld
 @onready var loot: Node2D = $LootWorld
 @onready var combat: Node2D = $CombatSystem
 @onready var career_actions: Node2D = $CareerActionSystem
+@onready var ally_support: Node2D = $AllySupportSystem
 @onready var projection: Node2D = $PressureProjection
 @onready var hud: CanvasLayer = $HUD
 
 var rng := RandomNumberGenerator.new()
+var artifact_drop_rng := RandomNumberGenerator.new()
+var artifact_proc_rng := RandomNumberGenerator.new()
 var run_id := ""
 var career_id := "ops"
 var career: Dictionary = {}
@@ -41,6 +47,8 @@ var career_xp_multiplier := 1.0
 var career_regen_per_second := 0.0
 var career_magnet_base := 190.0
 var career_damage_reduction := 0.0
+var career_move_speed_base := 260.0
+var career_max_health_base := 100.0
 var run_time := 0.0
 var spawn_accumulator := 0.0
 var spawn_multiplier := 1.0
@@ -55,6 +63,9 @@ var runbook_level := 0
 var capacity_level := 0
 var redundancy_level := 0
 var redundancy_charges := 0
+var movement_speed_level := 0
+var career_skill_rate_level := 0
+var career_ultimate_rate_level := 0
 var capacity_regen_progress := 0.0
 var combat_build_summary := "Bash ×1"
 
@@ -116,15 +127,26 @@ var career_protocol_progress := 0.0
 var career_protocol_cooldown := 0.0
 var career_protocol_triggered := false
 var career_protocol_completions := 0
+var delivery_q_reduction_by_cast: Dictionary = {}
+var delivery_q_ultimate_reduction_total := 0.0
 var last_player_position := Vector2.ZERO
 var last_player_health := 0.0
 var next_radar_update := 0.0
+var equipped_artifact_ids: Array[String] = []
+var ground_artifact_ids: Array[String] = []
+var artifact_timers: Dictionary = {}
+var artifact_intervals: Dictionary = {}
+var artifact_cooldowns: Dictionary = {}
+var artifact_once_used: Dictionary = {}
+var artifact_processing_health := false
 
 
 func _ready() -> void:
 	smoke_test_mode = OS.get_cmdline_user_args().has("--smoke-test")
 	rng.seed = int(Time.get_unix_time_from_system())
 	run_id = "%d-%d" % [Time.get_ticks_usec(), rng.randi()]
+	artifact_drop_rng.seed = rng.seed ^ 0x41A7F4C7
+	artifact_proc_rng.seed = rng.seed ^ 0x5EEDB007
 	career_id = "ops" if smoke_test_mode else String(ProfileStore.session_career_id)
 	career = CareerCatalog.get_by_id(career_id)
 	difficulty_id = "normal" if smoke_test_mode else String(ProfileStore.session_difficulty_id)
@@ -142,6 +164,8 @@ func _ready() -> void:
 	projection.call("configure", player)
 	combat.call("configure", player, swarm, projection)
 	career_actions.call("configure", player, swarm, projection, combat)
+	ally_support.call("configure", player, swarm, loot, projection, career_actions)
+	AudioDirector.bind_run(combat, career_actions, swarm)
 	_ensure_action_input_map()
 	_apply_profile_and_career()
 	hud.call("configure_career", career)
@@ -152,16 +176,22 @@ func _ready() -> void:
 	_refresh_career_protocol()
 
 	swarm.enemy_closed.connect(_on_enemy_closed)
+	swarm.enemy_closed_by_source.connect(_on_enemy_closed_by_source)
 	swarm.boss_status_changed.connect(_on_boss_status_changed)
 	swarm.boss_defeated.connect(_on_boss_defeated)
 	swarm.elite_skill_cast.connect(_on_enemy_skill_cast)
 	loot.xp_collected.connect(_on_xp_collected)
+	if loot.has_signal("artifact_collected"):
+		loot.connect("artifact_collected", _on_artifact_collected)
 	player.health_changed.connect(_on_health_changed)
 	player.died.connect(_on_player_died)
 	projection.shell_resolved.connect(_on_projection_shell_resolved)
 	projection.ally_joined.connect(_on_ally_joined)
+	ally_support.ability_triggered.connect(_on_ally_ability_triggered)
 	combat.build_changed.connect(_on_build_changed)
 	career_actions.action_feedback.connect(_on_career_action_feedback)
+	career_actions.action_used.connect(_on_career_action_used)
+	career_actions.career_metric.connect(_on_career_metric)
 	hud.upgrade_selected.connect(_on_upgrade_selected)
 	hud.upgrade_reroll_requested.connect(_on_upgrade_reroll_requested)
 	if hud.has_signal("event_strategy_selected"):
@@ -182,7 +212,8 @@ func _ready() -> void:
 	if smoke_test_mode:
 		# Keep automated validation focused on the complete event flow instead
 		# of player survival while no movement input is available.
-		player.max_health = 1_000_000.0
+		career_max_health_base = 1_000_000.0
+		player.max_health = career_max_health_base
 		player.health = player.max_health
 	_spawn_opening_wave()
 	_on_health_changed(player.health, player.max_health)
@@ -213,9 +244,11 @@ func _apply_profile_and_career() -> void:
 	projection.call("configure_career", career)
 	combat.call("configure_career", career)
 	career_actions.call("configure_career", career)
-	player.max_health = 100.0 * float(stats.get("health", 1.0)) + float(permanent.get("health", 0)) * 6.0
+	career_max_health_base = 100.0 * float(stats.get("health", 1.0)) + float(permanent.get("health", 0)) * 6.0
+	player.max_health = career_max_health_base
 	player.health = player.max_health
-	player.move_speed = 260.0 * float(stats.get("move_speed", 1.0)) * (1.0 + float(permanent.get("mobility", 0)) * 0.02)
+	career_move_speed_base = 260.0 * float(stats.get("move_speed", 1.0)) * (1.0 + float(permanent.get("mobility", 0)) * 0.02)
+	player.move_speed = career_move_speed_base
 	career_damage_reduction = float(stats.get("damage_reduction", 0.0))
 	player.damage_reduction = career_damage_reduction
 	career_xp_multiplier = float(stats.get("xp", 1.0)) * (1.0 + float(permanent.get("telemetry", 0)) * 0.03)
@@ -234,6 +267,7 @@ func _apply_profile_and_career() -> void:
 				redundancy_charges = maxi(1, redundancy_charges)
 	loot.call("set_magnet_radius", career_magnet_base + float(runbook_level) * 30.0)
 	combat_build_summary = String(combat.call("get_build_summary"))
+	_refresh_meta_growth_and_artifacts()
 
 
 func _process(delta: float) -> void:
@@ -244,6 +278,7 @@ func _process(delta: float) -> void:
 	_update_timeline()
 	_update_spawning(delta)
 	_update_passives(delta)
+	_update_artifacts(delta)
 	_update_career_protocol(delta)
 	if smoke_test_mode:
 		_update_smoke_test(delta)
@@ -377,6 +412,7 @@ func _on_event_strategy_selected(selected_event_id: String, strategy_id: String 
 	event_stage = 0
 	event_career_bonus_triggered = false
 	_apply_event_career_bonus()
+	AudioDirector.set_music_context("escalation")
 	spawn_multiplier = float(event_strategy.get("spawn_multiplier", 1.0))
 	_sync_legacy_release_state()
 	hud.hide_modal()
@@ -384,6 +420,7 @@ func _on_event_strategy_selected(selected_event_id: String, strategy_id: String 
 	# Every event contains a different human pressure projection. Combat breaks
 	# the pressure shell; alignment turns that colleague into a War Room ally.
 	var persona_id := _event_persona_id()
+	ally_support.call("deactivate")
 	projection.call("set_persona", persona_id)
 	var projection_position := player.global_position + Vector2(260, -85)
 	projection_position.x = clampf(projection_position.x, 72.0, 2328.0)
@@ -402,6 +439,9 @@ func _on_event_strategy_selected(selected_event_id: String, strategy_id: String 
 
 
 func _event_persona_id() -> String:
+	var strategy_persona := String(event_strategy.get("persona_id", ""))
+	if not strategy_persona.is_empty():
+		return strategy_persona
 	match event_id:
 		"release": return "product"
 		"version_update": return "backend"
@@ -578,6 +618,8 @@ func _complete_special_event(outcome: String, detail: String) -> void:
 			player.take_damage(15.0)
 	if hud.has_method("hide_event_objective"):
 		hud.call("hide_event_objective")
+	if not boss_spawned:
+		AudioDirector.set_music_context("run")
 	queue_redraw()
 	_sync_legacy_release_state()
 	var prefix: String = String({"success": "成功", "partial": "部分成功", "failed": "失败"}.get(outcome, "已结束"))
@@ -651,7 +693,17 @@ func _on_enemy_closed(world_position: Vector2, xp_value: int, enemy_kind: int, t
 	enemies_closed += 1
 	if tier == 1:
 		elites_closed += 1
-	loot.call("spawn_xp", world_position, xp_value)
+	if tier == 1 and loot.has_method("spawn_xp_burst"):
+		loot.call(
+			"spawn_xp_burst",
+			world_position,
+			int(difficulty.get("elite_crystal_total", maxi(xp_value, 24))),
+			int(difficulty.get("elite_crystal_count", 4)),
+			1,
+			float(difficulty.get("elite_crystal_scale", 1.45))
+		)
+	else:
+		loot.call("spawn_xp", world_position, xp_value)
 	if event_active and tier == 0:
 		match event_id:
 			"release", "version_update":
@@ -676,7 +728,30 @@ func _on_enemy_closed(world_position: Vector2, xp_value: int, enemy_kind: int, t
 		if boss_clues >= boss_clues_required:
 			swarm.call("expose_boss")
 			hud.set_event_message("根因已暴露：UPSTREAM", Color("ffca58"))
+	_artifact_on_enemy_closed(world_position, tier)
+	if tier == 1:
+		_try_drop_artifact(world_position)
 	_career_on_enemy_closed(world_position, tier)
+
+
+func _on_enemy_closed_by_source(source_id: String, _world_position: Vector2, _tier: int) -> void:
+	if career_id != "delivery" or not source_id.begins_with("delivery_q_"):
+		return
+	var reduction_per_close := float(career_actions.call("delivery_q_kill_ultimate_reduction"))
+	var reduction_cap := float(career_actions.call("delivery_q_cast_ultimate_reduction_cap"))
+	var ultimate_remaining := float(career_actions.get("ultimate_cooldown_left"))
+	if reduction_per_close <= 0.0 or reduction_cap <= 0.0 or ultimate_remaining <= 0.0:
+		return
+	var already_reduced := float(delivery_q_reduction_by_cast.get(source_id, 0.0))
+	var reduction := minf(reduction_per_close, minf(reduction_cap - already_reduced, ultimate_remaining))
+	if reduction <= 0.0:
+		return
+	career_actions.call("reduce_ultimate_cooldown", reduction)
+	delivery_q_reduction_by_cast[source_id] = already_reduced + reduction
+	delivery_q_ultimate_reduction_total += reduction
+	while delivery_q_reduction_by_cast.size() > 96:
+		delivery_q_reduction_by_cast.erase(delivery_q_reduction_by_cast.keys()[0])
+	_refresh_career_protocol()
 
 
 func _on_xp_collected(value: int) -> void:
@@ -709,7 +784,9 @@ func _open_upgrade() -> void:
 
 func _build_upgrade_choices() -> Array[Dictionary]:
 	var upgrade_ids: Array[String] = combat.call("get_weapon_upgrade_ids")
-	upgrade_ids.append_array(["idempotency", "runbook", "capacity", "redundancy"])
+	upgrade_ids.append_array(career_actions.call("get_signature_upgrade_ids"))
+	upgrade_ids.append_array(career_actions.call("get_career_upgrade_ids"))
+	upgrade_ids.append_array(["movement_speed", "career_skill_rate", "career_ultimate_rate", "idempotency", "runbook", "capacity", "redundancy"])
 	var pool: Array[Dictionary] = []
 	for id in upgrade_ids:
 		if _get_upgrade_level(id) >= _get_upgrade_cap(id):
@@ -717,108 +794,72 @@ func _build_upgrade_choices() -> Array[Dictionary]:
 		if _is_combat_weapon(id) and _get_upgrade_level(id) == 0 and _regular_combat_slot_count() >= REGULAR_COMBAT_SLOT_CAP:
 			continue
 		pool.append(_decorate_upgrade_card(_get_upgrade_card(id)))
-	pool.shuffle()
-	var choices: Array[Dictionary] = []
-	# Evolution is always shown when ready; the other slots still preserve one
-	# stackable owned skill and one new direction whenever possible.
 	if combat.call("can_evolve"):
-		choices.append(_decorate_upgrade_card(_get_upgrade_card("iac")))
-	elif smoke_test_mode and int(combat.call("get_upgrade_level", "bash")) < 3:
-		# The automated full-flow run also keeps the legacy Bash → IaC path
-		# deterministic while exercising the two architecture decisions.
-		choices.append(_decorate_upgrade_card(_get_upgrade_card("bash")))
-	elif int(combat.call("get_upgrade_level", "bash")) >= 2 and int(combat.call("get_upgrade_level", "idempotency")) == 0:
-		# Once the player commits to Bash, surface its first real synergy instead
-		# of allowing pure RNG to postpone the evolution path until the run ends.
-		choices.append(_decorate_upgrade_card(_get_upgrade_card("idempotency")))
-	var owned: Array[Dictionary] = []
-	var owned_combat: Array[Dictionary] = []
-	var career_fit: Array[Dictionary] = []
-	var fresh: Array[Dictionary] = []
-	for card in pool:
-		if String(card["id"]) in _career_affinity_ids():
-			career_fit.append(card)
-		if _get_upgrade_level(String(card["id"])) > 0:
-			owned.append(card)
-			if _is_combat_weapon(String(card["id"])):
-				owned_combat.append(card)
-		else:
-			fresh.append(card)
-	owned.shuffle()
-	owned_combat.shuffle()
-	career_fit.shuffle()
-	fresh.shuffle()
-	if choices.size() < 3:
-		for card in owned_combat:
-			if not _choices_contain(choices, String(card["id"])):
-				choices.append(card)
-				break
-	if choices.size() < 3:
-		for card in career_fit:
-			if not _choices_contain(choices, String(card["id"])):
-				choices.append(card)
-				break
-	if choices.size() < 3:
-		for card in fresh:
-			if not _choices_contain(choices, String(card["id"])):
-				choices.append(card)
-				break
-	for card in pool:
-		if choices.size() >= 3:
-			break
-		if not _choices_contain(choices, String(card["id"])):
-			choices.append(card)
-	return choices
+		pool.append(_decorate_upgrade_card(_get_upgrade_card("iac")))
+	return _sample_random_cards(pool, 3)
 
 
 func _build_architecture_choices() -> Array[Dictionary]:
 	var ids: Array[String] = combat.call("get_architecture_upgrade_ids")
-	var owned: Array[String] = []
-	var available: Array[String] = []
+	var pool: Array[Dictionary] = []
 	for id in ids:
 		if _get_upgrade_level(id) >= 2:
 			continue
-		available.append(id)
-		if _get_upgrade_level(id) > 0:
-			owned.append(id)
-	available.shuffle()
-	owned.shuffle()
-	var choices: Array[Dictionary] = []
-	if not owned.is_empty():
-		choices.append(_decorate_architecture_card(_get_upgrade_card(owned[0])))
-	var preferred_architecture := _career_architecture_id()
-	if preferred_architecture in available and not _choices_contain(choices, preferred_architecture):
-		choices.append(_decorate_architecture_card(_get_upgrade_card(preferred_architecture)))
-	for id in available:
-		if choices.size() >= 3:
-			break
-		if not _choices_contain(choices, id):
-			choices.append(_decorate_architecture_card(_get_upgrade_card(id)))
-	return choices
+		pool.append(_decorate_architecture_card(_get_upgrade_card(id)))
+	return _sample_random_cards(pool, 3)
+
+
+func _sample_random_cards(pool: Array[Dictionary], wanted: int) -> Array[Dictionary]:
+	var available := pool.duplicate(true)
+	var result: Array[Dictionary] = []
+	while result.size() < wanted and not available.is_empty():
+		var selected_index := rng.randi_range(0, available.size() - 1)
+		result.append(available[selected_index])
+		available.remove_at(selected_index)
+	return result
 
 
 func _on_upgrade_selected(upgrade_id: String) -> void:
 	var feedback_card := _get_upgrade_card(upgrade_id)
 	var is_architecture := upgrade_id.begins_with("arch_")
-	match upgrade_id:
-		"runbook":
-			runbook_level = mini(3, runbook_level + 1)
-			player.heal(10.0)
-			loot.call("set_magnet_radius", career_magnet_base + float(runbook_level) * 30.0)
-		"capacity":
-			capacity_level = mini(3, capacity_level + 1)
-			player.max_health += 15.0
-			player.health += 15.0
-			player.damage_reduction = career_damage_reduction + float(capacity_level) * 0.06
-			player.health_changed.emit(player.health, player.max_health)
-		"redundancy":
-			redundancy_level = mini(2, redundancy_level + 1)
-			redundancy_charges += 1
-			player.max_health += 8.0
-			player.health += 8.0
-			player.health_changed.emit(player.health, player.max_health)
-		_:
-			combat.call("apply_upgrade", upgrade_id)
+	var is_signature_growth := _is_signature_upgrade(upgrade_id)
+	var is_career_growth := _is_career_upgrade(upgrade_id)
+	if is_signature_growth:
+		career_actions.call("apply_signature_upgrade", upgrade_id)
+	elif is_career_growth:
+		career_actions.call("apply_career_upgrade", upgrade_id)
+	else:
+		match upgrade_id:
+			"movement_speed":
+				movement_speed_level += 1
+				_refresh_meta_growth_and_artifacts()
+			"career_skill_rate":
+				career_skill_rate_level += 1
+				_refresh_meta_growth_and_artifacts()
+			"career_ultimate_rate":
+				career_ultimate_rate_level += 1
+				_refresh_meta_growth_and_artifacts()
+			"runbook":
+				runbook_level = mini(3, runbook_level + 1)
+				player.heal(10.0)
+				loot.call("set_magnet_radius", career_magnet_base + float(runbook_level) * 30.0)
+			"capacity":
+				var old_maximum: float = float(player.max_health)
+				var old_health: float = float(player.health)
+				capacity_level = mini(3, capacity_level + 1)
+				_refresh_meta_growth_and_artifacts()
+				player.health = minf(player.max_health, old_health + maxf(0.0, player.max_health - old_maximum))
+				player.health_changed.emit(player.health, player.max_health)
+			"redundancy":
+				var old_maximum: float = float(player.max_health)
+				var old_health: float = float(player.health)
+				redundancy_level = mini(2, redundancy_level + 1)
+				redundancy_charges += 1
+				_refresh_meta_growth_and_artifacts()
+				player.health = minf(player.max_health, old_health + maxf(0.0, player.max_health - old_maximum))
+				player.health_changed.emit(player.health, player.max_health)
+			_:
+				combat.call("apply_upgrade", upgrade_id)
 	if is_architecture:
 		pending_architecture_upgrades = maxi(0, pending_architecture_upgrades - 1)
 		architecture_choices_taken += 1
@@ -826,7 +867,12 @@ func _on_upgrade_selected(upgrade_id: String) -> void:
 		if not signature_id.is_empty() and signature_id not in architecture_signature_ids:
 			architecture_signature_ids.append(signature_id)
 	combat.call("play_upgrade_burst", upgrade_id, Color(feedback_card["color"]), _get_upgrade_level(upgrade_id))
-	combat.call("prime_upgraded_skill", upgrade_id)
+	if is_signature_growth:
+		career_actions.call("prime_signature")
+		if upgrade_id == "signature_area" and career_actions.has_method("play_signature_range_preview"):
+			career_actions.call("play_signature_range_preview")
+	elif not is_career_growth:
+		combat.call("prime_upgraded_skill", upgrade_id)
 	hud.show_stack_feedback(String(feedback_card["title"]), String(feedback_card["description"]), Color(feedback_card["color"]))
 	_refresh_build_summary()
 	_evaluate_career_milestones()
@@ -860,10 +906,18 @@ func _on_ally_joined() -> void:
 		var allied_scaled_clues := maxi(3, ceili(float(allied_base_clues) * float(difficulty.get("boss_clue_multiplier", 1.0))))
 		boss_clues_required = mini(boss_clues_required, allied_scaled_clues)
 	var ally_name := String(projection.call("get_persona_name")) if projection.has_method("get_persona_name") else "协作伙伴"
+	ally_support.call("set_run_level", level)
+	ally_support.call("activate", String(projection.get("persona_id")))
 	if hud.has_method("set_pressure_persona_allied"):
 		hud.call("set_pressure_persona_allied", true)
-	hud.set_event_message("%s已加入 War Room：真实处置目标已标记" % ally_name, Color("55e7c2"))
+	var ally_snapshot: Dictionary = ally_support.call("get_support_snapshot")
+	hud.set_event_message("%s已加入 War Room：%s自动接入" % [ally_name, String(ally_snapshot.get("ability", "协作能力"))], Color("55e7c2"))
 	_try_finish_release()
+
+
+func _on_ally_ability_triggered(_persona_id: String, ability_name: String, detail: String, color: Color) -> void:
+	if hud.has_method("show_ally_ability"):
+		hud.call("show_ally_ability", ability_name, detail, color)
 
 
 func _on_boss_status_changed(phase: int, boss_health: float, maximum: float) -> void:
@@ -903,11 +957,23 @@ func _update_validation(delta: float) -> void:
 
 
 func _on_health_changed(current: float, _maximum: float) -> void:
+	if artifact_processing_health:
+		last_player_health = current
+		_update_hud()
+		return
+	var damage_taken := maxf(0.0, last_player_health - current)
+	var took_damage := damage_taken > 0.01
 	_career_on_health_changed(current)
+	if took_damage:
+		AudioDirector.play_player_hit()
+		if not artifact_processing_health:
+			_artifact_on_damage(damage_taken)
 	_update_hud()
 
 
 func _on_player_died() -> void:
+	if _artifact_try_revive():
+		return
 	if redundancy_charges > 0:
 		redundancy_charges -= 1
 		player.health = player.max_health * (0.35 if redundancy_level <= 1 else 0.45)
@@ -926,7 +992,17 @@ func _end_run(victory: bool, summary: String) -> void:
 	spawning_enabled = false
 	player.input_enabled = false
 	if smoke_test_mode:
-		var upgrade_flow_valid: bool = int(combat.call("get_upgrade_level", "bash")) >= 3 and int(combat.call("get_upgrade_level", "idempotency")) >= 1 and int(combat.call("get_upgrade_level", "iac")) == 1
+		var combat_growth := 0
+		for upgrade_id in combat.call("get_weapon_upgrade_ids"):
+			combat_growth += int(combat.call("get_upgrade_level", String(upgrade_id)))
+		var signature_growth: Dictionary = career_actions.call("get_signature_growth_snapshot")
+		var signature_levels: Dictionary = signature_growth.get("levels", {})
+		var total_growth := combat_growth + movement_speed_level + career_skill_rate_level + career_ultimate_rate_level + runbook_level + capacity_level + redundancy_level
+		for growth_level in signature_levels.values():
+			total_growth += int(growth_level)
+		for career_upgrade_id in career_actions.call("get_career_upgrade_ids"):
+			total_growth += int(career_actions.call("get_career_upgrade_level", String(career_upgrade_id)))
+		var upgrade_flow_valid := level >= 10 and total_growth >= 7
 		var architecture_flow_valid := architecture_choices_taken >= 2 and not architecture_signature_ids.is_empty()
 		var smoke_passed: bool = victory and bool(projection.ally) and event_outcome == "success" and upgrade_flow_valid and architecture_flow_valid
 		print("SMOKE_TEST_PASS" if smoke_passed else "SMOKE_TEST_FAIL", " | time=%.1f | level=%d | ally=%s | build=%s | %s" % [run_time, level, projection.ally, String(combat.call("get_build_summary")), summary.replace("\n", " ")])
@@ -945,6 +1021,11 @@ func _build_run_result(victory: bool) -> Dictionary:
 		build[String(upgrade_id)] = int(combat.call("get_upgrade_level", String(upgrade_id)))
 	build["idempotency"] = int(combat.call("get_upgrade_level", "idempotency"))
 	build["iac"] = int(combat.call("get_upgrade_level", "iac")) == 1
+	build["movement_speed"] = movement_speed_level
+	build["career_skill_rate"] = career_skill_rate_level
+	build["career_ultimate_rate"] = career_ultimate_rate_level
+	for career_upgrade_id in career_actions.call("get_career_upgrade_ids"):
+		build[String(career_upgrade_id)] = int(career_actions.call("get_career_upgrade_level", String(career_upgrade_id)))
 	var structured_event := {
 		"instance_id": "%s-0" % event_id,
 		"event_id": event_id,
@@ -975,6 +1056,8 @@ func _build_run_result(victory: bool) -> Dictionary:
 		"closed": enemies_closed,
 		"elites": elites_closed,
 		"ally": bool(projection.ally),
+		"ally_persona_id": String(projection.get("persona_id")) if bool(projection.ally) else "",
+		"ally_trigger_count": int(ally_support.call("get_support_snapshot").get("trigger_count", 0)),
 		"event_id": event_id,
 		"event_strategy": event_strategy_id,
 		"event_status": event_outcome,
@@ -987,6 +1070,7 @@ func _build_run_result(victory: bool) -> Dictionary:
 		"health_ratio": player.health / maxf(1.0, player.max_health),
 		"protocol_completions": career_protocol_completions,
 		"architectures": architecture_signature_ids.duplicate(),
+		"artifacts": equipped_artifact_ids.duplicate(),
 		"build": build,
 	}
 
@@ -997,6 +1081,9 @@ func _update_hud() -> void:
 	hud.update_status(player.health, player.max_health, level, xp, current_xp_required, run_time, RUN_DURATION)
 	if hud.has_method("update_career_actions"):
 		hud.call("update_career_actions", career_actions.call("get_action_snapshot"))
+	ally_support.call("set_run_level", level)
+	if hud.has_method("update_ally_support"):
+		hud.call("update_ally_support", ally_support.call("get_support_snapshot"))
 	if run_time >= next_radar_update and hud.has_method("update_radar"):
 		next_radar_update = run_time + 0.18
 		hud.call("update_radar", player.global_position, swarm.call("get_radar_snapshot", 72))
@@ -1041,6 +1128,344 @@ func get_difficulty_runtime_snapshot() -> Dictionary:
 
 func _xp_required_for(target_level: int) -> int:
 	return 10 + target_level * 8
+
+
+func _movement_multiplier_for_level(level_value: int) -> float:
+	var resolved := float(maxi(0, level_value))
+	return 1.0 + 0.60 * resolved / (resolved + 9.0)
+
+
+func _career_skill_cooldown_for_level(level_value: int) -> float:
+	return float(career_actions.call("_skill_cooldown_for_level", level_value))
+
+
+func _career_ultimate_cooldown_for_level(level_value: int) -> float:
+	return float(career_actions.call("_ultimate_cooldown_for_level", level_value))
+
+
+func _artifact_multiplier(key: String) -> float:
+	var result := 1.0
+	for artifact_id in equipped_artifact_ids:
+		var effects: Dictionary = ArtifactCatalog.get_by_id(artifact_id).get("effects", {})
+		result *= float(effects.get(key, 1.0))
+	return result
+
+
+func _artifact_additive(key: String) -> float:
+	var result := 0.0
+	for artifact_id in equipped_artifact_ids:
+		var effects: Dictionary = ArtifactCatalog.get_by_id(artifact_id).get("effects", {})
+		result += float(effects.get(key, 0.0))
+	return result
+
+
+func _refresh_meta_growth_and_artifacts() -> void:
+	var target_maximum := maxf(1.0, (career_max_health_base + float(capacity_level) * 15.0 + float(redundancy_level) * 8.0) * _artifact_multiplier("max_health"))
+	if not is_equal_approx(player.max_health, target_maximum):
+		var health_ratio := clampf(player.health / maxf(1.0, player.max_health), 0.0, 1.0)
+		player.max_health = target_maximum
+		player.health = minf(target_maximum, target_maximum * health_ratio)
+	player.move_speed = career_move_speed_base * _movement_multiplier_for_level(movement_speed_level) * _artifact_multiplier("move_speed")
+	player.damage_reduction = career_damage_reduction + float(capacity_level) * 0.06 + _artifact_additive("damage_reduction")
+	if combat.has_method("set_artifact_modifiers"):
+		combat.call("set_artifact_modifiers", _artifact_multiplier("damage_multiplier"), _artifact_multiplier("tool_cooldown"))
+	if career_actions.has_method("set_meta_growth_levels"):
+		career_actions.call("set_meta_growth_levels", career_skill_rate_level, career_ultimate_rate_level)
+	if career_actions.has_method("set_artifact_modifiers"):
+		career_actions.call(
+			"set_artifact_modifiers",
+			_artifact_multiplier("skill_cooldown"),
+			_artifact_multiplier("ultimate_cooldown"),
+			_artifact_multiplier("damage_multiplier"),
+			_artifact_multiplier("signature_area")
+		)
+	if hud != null and hud.has_method("update_artifact_slots"):
+		var artifacts: Array[Dictionary] = []
+		for artifact_id in equipped_artifact_ids:
+			artifacts.append(ArtifactCatalog.get_by_id(artifact_id))
+		hud.call("update_artifact_slots", artifacts)
+
+
+func get_artifact_runtime_snapshot() -> Dictionary:
+	return {
+		"equipped": equipped_artifact_ids.duplicate(),
+		"ground": ground_artifact_ids.duplicate(),
+		"slots": ARTIFACT_SLOT_CAP,
+		"drop_chance": float(difficulty.get("artifact_drop_chance", 0.0)),
+		"move_speed": player.move_speed,
+		"damage_multiplier": _artifact_multiplier("damage_multiplier"),
+		"skill_cooldown_multiplier": _artifact_multiplier("skill_cooldown"),
+		"ultimate_cooldown_multiplier": _artifact_multiplier("ultimate_cooldown"),
+		"signature_area_multiplier": _artifact_multiplier("signature_area"),
+		"damage_reduction_bonus": _artifact_additive("damage_reduction"),
+		"timers": artifact_timers.duplicate(),
+		"intervals": artifact_intervals.duplicate(),
+		"cooldowns": artifact_cooldowns.duplicate(),
+		"once_used": artifact_once_used.duplicate(),
+		"rerolls": reroll_charges,
+	}
+
+
+func _artifact_drop_succeeds(roll: float) -> bool:
+	var chance := clampf(float(difficulty.get("artifact_drop_chance", 0.0)), 0.0, 1.0)
+	return roll >= 0.0 and roll < chance
+
+
+func _try_drop_artifact(world_position: Vector2, roll_override: float = -1.0, selection_index_override: int = -1) -> String:
+	# Carry capacity and world-choice capacity are separate: with one artifact
+	# equipped, two ground drops may coexist so the player can choose the second.
+	if equipped_artifact_ids.size() >= ARTIFACT_SLOT_CAP or ground_artifact_ids.size() >= ARTIFACT_SLOT_CAP:
+		return ""
+	var roll := roll_override if roll_override >= 0.0 else artifact_drop_rng.randf()
+	if not _artifact_drop_succeeds(roll):
+		return ""
+	var excluded: Array[String] = equipped_artifact_ids.duplicate()
+	for artifact_id in ground_artifact_ids:
+		if artifact_id not in excluded:
+			excluded.append(artifact_id)
+	var candidates := ArtifactCatalog.available_excluding(excluded)
+	if candidates.is_empty():
+		return ""
+	var selected_index := selection_index_override
+	if selected_index < 0:
+		selected_index = artifact_drop_rng.randi_range(0, candidates.size() - 1)
+	selected_index = clampi(selected_index, 0, candidates.size() - 1)
+	var definition: Dictionary = candidates[selected_index]
+	var artifact_id := String(definition.get("id", ""))
+	if artifact_id.is_empty() or not loot.has_method("spawn_artifact"):
+		return ""
+	if not bool(loot.call("spawn_artifact", world_position, artifact_id)):
+		return ""
+	ground_artifact_ids.append(artifact_id)
+	if hud.has_method("show_artifact_reel"):
+		hud.call("show_artifact_reel", definition, candidates)
+	else:
+		hud.show_stack_feedback("精英掉落 · %s" % String(definition.get("name", artifact_id)), "靠近拾取；每局最多安装 2 件神器", _artifact_color(artifact_id))
+	return artifact_id
+
+
+func _on_artifact_collected(artifact_id: String) -> void:
+	ground_artifact_ids.erase(artifact_id)
+	_equip_artifact(artifact_id)
+
+
+func _equip_artifact(artifact_id: String) -> bool:
+	if equipped_artifact_ids.size() >= ARTIFACT_SLOT_CAP or artifact_id in equipped_artifact_ids:
+		return false
+	var definition := ArtifactCatalog.get_by_id(artifact_id)
+	if definition.is_empty():
+		return false
+	var effects: Dictionary = definition.get("effects", {})
+	equipped_artifact_ids.append(artifact_id)
+	if is_instance_valid(ProfileStore) and ProfileStore.has_method("discover_artifact"):
+		ProfileStore.call("discover_artifact", artifact_id)
+	ground_artifact_ids.erase(artifact_id)
+	var reclaimed_ground_choice := false
+	if equipped_artifact_ids.size() >= ARTIFACT_SLOT_CAP:
+		reclaimed_ground_choice = not ground_artifact_ids.is_empty()
+		ground_artifact_ids.clear()
+		if loot.has_method("clear_artifacts"):
+			loot.call("clear_artifacts")
+	if effects.has("interval"):
+		var interval := maxf(0.25, float(effects["interval"]))
+		artifact_intervals[artifact_id] = interval
+		artifact_timers[artifact_id] = interval
+	if effects.has("cooldown"):
+		artifact_cooldowns[artifact_id] = 0.0
+	if effects.has("rerolls"):
+		reroll_charges += maxi(0, int(effects["rerolls"]))
+	var changes_maximum_health := effects.has("max_health")
+	artifact_processing_health = changes_maximum_health
+	_refresh_meta_growth_and_artifacts()
+	if changes_maximum_health:
+		player.health_changed.emit(player.health, player.max_health)
+		artifact_processing_health = false
+	_refresh_build_summary()
+	combat.call("play_upgrade_burst", artifact_id, _artifact_color(artifact_id), 2)
+	var feedback_detail := String(definition.get("description", ""))
+	if reclaimed_ground_choice:
+		feedback_detail += "\n神器槽已满，其余地面协议已回收。"
+	hud.show_stack_feedback("神器已安装 · %s" % String(definition.get("name", artifact_id)), feedback_detail, _artifact_color(artifact_id))
+	return true
+
+
+func _update_artifacts(delta: float) -> void:
+	if equipped_artifact_ids.is_empty():
+		return
+	for artifact_id_value in artifact_cooldowns.keys():
+		var artifact_id := String(artifact_id_value)
+		artifact_cooldowns[artifact_id] = maxf(0.0, float(artifact_cooldowns[artifact_id]) - delta)
+	for artifact_id_value in artifact_intervals.keys():
+		var artifact_id := String(artifact_id_value)
+		var interval := maxf(0.25, float(artifact_intervals[artifact_id]))
+		var time_left := float(artifact_timers.get(artifact_id, interval)) - delta
+		if time_left <= 0.0:
+			_trigger_artifact(artifact_id)
+			time_left = interval
+		artifact_timers[artifact_id] = time_left
+
+
+func _trigger_artifact(artifact_id: String) -> void:
+	if artifact_id not in equipped_artifact_ids:
+		return
+	var definition := ArtifactCatalog.get_by_id(artifact_id)
+	var effects: Dictionary = definition.get("effects", {})
+	match String(effects.get("trigger", "")):
+		"rm_rf":
+			_artifact_rm_rf(effects)
+		"delete_incidents":
+			_artifact_delete_incidents(effects)
+		"flush_dns":
+			_artifact_flush_dns(effects)
+		"kill_minus_9":
+			_artifact_kill_minus_9(effects)
+		_:
+			return
+	combat.call("play_upgrade_burst", artifact_id, _artifact_color(artifact_id), 2)
+
+
+func _artifact_rm_rf(effects: Dictionary) -> void:
+	var radius_squared := pow(float(effects.get("radius", 620.0)), 2.0)
+	var candidates: Array[Dictionary] = []
+	for index in range(swarm.count):
+		var distance_squared: float = Vector2(swarm.positions[index]).distance_squared_to(player.global_position)
+		if distance_squared <= radius_squared:
+			candidates.append({"index": index, "distance": distance_squared})
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["distance"]) < float(b["distance"]))
+	if candidates.size() > int(effects.get("targets", 24)):
+		candidates.resize(int(effects.get("targets", 24)))
+	var selected_indices: Array[int] = []
+	for candidate in candidates:
+		selected_indices.append(int(candidate["index"]))
+	selected_indices.sort()
+	selected_indices.reverse()
+	for index in selected_indices:
+		var tier := int(swarm.call("_tier", int(swarm.kinds[index])))
+		var damage: float = float(swarm.maximum_health[index]) + float(swarm.shield_health[index]) + 1.0
+		if tier == 1:
+			damage = float(effects.get("elite_damage", 80.0))
+		elif tier == 2:
+			damage = float(effects.get("boss_damage", 24.0))
+		swarm.call("damage_index", index, damage)
+
+
+func _artifact_delete_incidents(effects: Dictionary) -> void:
+	var candidates: Array[Dictionary] = []
+	var maximum_distance_squared := pow(float(effects.get("range", 560.0)), 2.0)
+	for index in range(swarm.count):
+		var tier := int(swarm.call("_tier", int(swarm.kinds[index])))
+		if tier == 2 and swarm.boss_phase != 1:
+			continue
+		var distance_squared: float = Vector2(swarm.positions[index]).distance_squared_to(player.global_position)
+		if distance_squared <= maximum_distance_squared:
+			candidates.append({"index": index, "distance": distance_squared, "tier": tier})
+	candidates.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return float(a["distance"]) < float(b["distance"]))
+	if candidates.size() > int(effects.get("targets", 4)):
+		candidates.resize(int(effects.get("targets", 4)))
+	var selected_indices: Array[int] = []
+	for candidate in candidates:
+		selected_indices.append(int(candidate["index"]))
+	selected_indices.sort()
+	selected_indices.reverse()
+	for index in selected_indices:
+		var tier := int(swarm.call("_tier", int(swarm.kinds[index])))
+		var damage: float = float(swarm.maximum_health[index]) + float(swarm.shield_health[index]) + 1.0
+		if tier == 1:
+			damage = float(effects.get("elite_damage", 66.0))
+		elif tier == 2:
+			damage = float(effects.get("boss_damage", 18.0))
+		swarm.call("damage_index", index, damage)
+
+
+func _artifact_flush_dns(effects: Dictionary) -> void:
+	var radius := float(effects.get("range", 520.0))
+	swarm.call("damage_nearest_targets", player.global_position, radius, float(effects.get("damage", 38.0)), int(effects.get("targets", 7)), 0.82)
+	swarm.call("slow_area", player.global_position, radius, 1.35)
+
+
+func _artifact_kill_minus_9(effects: Dictionary) -> void:
+	var selected_index := -1
+	var lowest_ratio := INF
+	for index in range(swarm.count):
+		var tier := int(swarm.call("_tier", int(swarm.kinds[index])))
+		if tier >= 2:
+			continue
+		var health_ratio: float = float(swarm.health[index]) / maxf(1.0, float(swarm.maximum_health[index]))
+		if health_ratio < lowest_ratio:
+			lowest_ratio = health_ratio
+			selected_index = index
+	if selected_index < 0:
+		return
+	var selected_tier := int(swarm.call("_tier", int(swarm.kinds[selected_index])))
+	var damage: float = float(swarm.maximum_health[selected_index]) + float(swarm.shield_health[selected_index]) + 1.0
+	if selected_tier == 1 and lowest_ratio > float(effects.get("elite_threshold", 0.18)):
+		damage = float(effects.get("fallback_damage", 54.0))
+	swarm.call("damage_index", selected_index, damage)
+
+
+func _artifact_on_enemy_closed(world_position: Vector2, tier: int) -> void:
+	if tier != 1 or "snapshot_backup" not in equipped_artifact_ids:
+		return
+	var effects: Dictionary = ArtifactCatalog.get_by_id("snapshot_backup").get("effects", {})
+	player.heal(float(effects.get("heal", 6.0)))
+	loot.call("spawn_xp", world_position, int(effects.get("xp", 8)), 0, 1.20)
+
+
+func _on_career_action_used(action_kind: String, _action_id: String) -> void:
+	if action_kind != "skill" or "reboot_device" not in equipped_artifact_ids:
+		return
+	var effects: Dictionary = ArtifactCatalog.get_by_id("reboot_device").get("effects", {})
+	if artifact_proc_rng.randf() < float(effects.get("chance", 0.22)):
+		career_actions.call("reset_skill_cooldown")
+		combat.call("play_upgrade_burst", "reboot_device", _artifact_color("reboot_device"), 2)
+		hud.show_stack_feedback("重启设备 · 冷却完成", "职业小技能可立即再次执行", _artifact_color("reboot_device"))
+	else:
+		var action_snapshot: Dictionary = career_actions.call("get_action_snapshot")
+		var effective_cooldown := float(action_snapshot.get("skill", {}).get("cooldown", 2.0))
+		var safe_reduction := minf(float(effects.get("fallback_reduction", 2.0)), effective_cooldown * 0.40)
+		career_actions.call("reduce_skill_cooldown", safe_reduction)
+
+
+func _artifact_on_damage(damage_taken: float) -> void:
+	if "rollback_previous" not in equipped_artifact_ids:
+		return
+	var effects: Dictionary = ArtifactCatalog.get_by_id("rollback_previous").get("effects", {})
+	if damage_taken < float(effects.get("threshold", 18.0)) or float(artifact_cooldowns.get("rollback_previous", 0.0)) > 0.0:
+		return
+	artifact_cooldowns["rollback_previous"] = float(effects.get("cooldown", 30.0))
+	artifact_processing_health = true
+	player.slow_left = 0.0
+	player.slow_multiplier = 1.0
+	player.slow_source = ""
+	player.heal(damage_taken * float(effects.get("heal_ratio", 0.50)))
+	artifact_processing_health = false
+	combat.call("play_upgrade_burst", "rollback_previous", _artifact_color("rollback_previous"), 2)
+	hud.show_stack_feedback("回滚上一版", "已撤销本次伤害的 50%，并清除减速", _artifact_color("rollback_previous"))
+
+
+func _artifact_try_revive() -> bool:
+	if "reinstall_os" not in equipped_artifact_ids or bool(artifact_once_used.get("reinstall_os", false)):
+		return false
+	var effects: Dictionary = ArtifactCatalog.get_by_id("reinstall_os").get("effects", {})
+	artifact_once_used["reinstall_os"] = true
+	artifact_processing_health = true
+	player.health = maxf(1.0, player.max_health * float(effects.get("health_ratio", 0.55)))
+	player.invulnerability_left = maxf(player.invulnerability_left, float(effects.get("invulnerability", 2.5)))
+	player.slow_left = 0.0
+	player.slow_multiplier = 1.0
+	player.slow_source = ""
+	swarm.hazards.clear()
+	swarm.queue_redraw()
+	player.health_changed.emit(player.health, player.max_health)
+	artifact_processing_health = false
+	combat.call("play_upgrade_burst", "reinstall_os", _artifact_color("reinstall_os"), 2)
+	hud.show_stack_feedback("重装系统完成", "恢复 55% 健康 · 2.5 秒无敌 · 危险区已清空", _artifact_color("reinstall_os"))
+	return true
+
+
+func _artifact_color(artifact_id: String) -> Color:
+	var definition := ArtifactCatalog.get_by_id(artifact_id)
+	return Color(String(definition.get("color", "ffd36a")))
 
 
 func _update_passives(delta: float) -> void:
@@ -1130,6 +1555,13 @@ func _career_on_health_changed(current: float) -> void:
 	_refresh_career_protocol()
 
 
+func _on_career_metric(metric_id: String, amount: float) -> void:
+	if career_id != "sre" or metric_id != "sre_root_closed":
+		return
+	career_protocol_progress = minf(100.0, career_protocol_progress + maxf(0.0, amount))
+	_refresh_career_protocol()
+
+
 func _trigger_dba_commit() -> void:
 	if ended:
 		return
@@ -1176,15 +1608,26 @@ func _refresh_career_protocol() -> void:
 		"it_ops": text = "现场处置 · 近身关单 %d / 6" % career_protocol_count
 		"helpdesk": text = "SLA 批次 · %d / 12 · 协作 ×2" % career_protocol_count
 		"opsdev": text = "幂等重试 · 关闭 %d / 14" % career_protocol_count
-		"sre": text = "错误预算 · %d / 100 · 50 自动恢复" % int(career_protocol_progress)
-		"delivery": text = "验收里程碑 · 已签署 · 评审 +1" if career_protocol_triggered else "验收里程碑 · 等待发布闭环"
-		"ai_infra": text = "自动扩缩容 · 关闭 %d / 20 · Worker %d" % [career_protocol_count, int(career_actions.call("get_worker_count"))]
+		"sre": text = "错误预算 · %d / 100 · 稳定积累 · 根因关闭 +10 · 50 自动恢复" % int(career_protocol_progress)
+		"delivery":
+			text = "验收里程碑 · 已签署 · 评审 +1" if career_protocol_triggered else "验收里程碑 · 等待发布闭环"
+			var burn_down_level := int(career_actions.call("get_career_upgrade_level", "delivery_release_burn_down"))
+			if burn_down_level > 0:
+				text += " · 发布燃尽 %d · R 已缩短 %.1fs" % [burn_down_level, delivery_q_ultimate_reduction_total]
+		"ai_infra": text = "KV Cache · 关闭 %d / 20 · 并行 Token %d" % [career_protocol_count, int(career_actions.call("get_worker_count"))]
 		_: text = "职业协议 · 运行中"
 	hud.call("update_career_protocol", text, Color(String(career.get("color", "ffd36a"))))
 
 
 func _get_upgrade_level(upgrade_id: String) -> int:
+	if _is_signature_upgrade(upgrade_id):
+		return int(career_actions.call("get_signature_upgrade_level", upgrade_id))
+	if _is_career_upgrade(upgrade_id):
+		return int(career_actions.call("get_career_upgrade_level", upgrade_id))
 	match upgrade_id:
+		"movement_speed": return movement_speed_level
+		"career_skill_rate": return career_skill_rate_level
+		"career_ultimate_rate": return career_ultimate_rate_level
 		"runbook": return runbook_level
 		"capacity": return capacity_level
 		"redundancy": return redundancy_level
@@ -1192,19 +1635,53 @@ func _get_upgrade_level(upgrade_id: String) -> int:
 
 
 func _get_upgrade_cap(upgrade_id: String) -> int:
+	if _is_career_upgrade(upgrade_id):
+		return int(career_actions.call("get_career_upgrade_cap", upgrade_id))
+	if _is_combat_weapon(upgrade_id) or _is_signature_upgrade(upgrade_id) or upgrade_id in ["movement_speed", "career_skill_rate", "career_ultimate_rate"]:
+		return INFINITE_GROWTH_CAP
 	match upgrade_id:
 		"idempotency", "runbook", "capacity": return 3
 		"redundancy": return 2
 		"arch_oncall", "arch_zero_trust", "arch_query", "arch_autoscale": return 2
 		"iac": return 1
-	return 5
+	return INFINITE_GROWTH_CAP
 
 
 func _get_upgrade_card(upgrade_id: String) -> Dictionary:
-	if _is_combat_weapon(upgrade_id) or upgrade_id in ["idempotency", "iac", "arch_oncall", "arch_zero_trust", "arch_query", "arch_autoscale"]:
-		return combat.call("get_upgrade_card", upgrade_id)
+	if _is_signature_upgrade(upgrade_id):
+		return career_actions.call("get_signature_upgrade_card", upgrade_id)
+	if _is_career_upgrade(upgrade_id):
+		return career_actions.call("get_career_upgrade_card", upgrade_id)
 	var current := _get_upgrade_level(upgrade_id)
 	var next := mini(_get_upgrade_cap(upgrade_id), current + 1)
+	match upgrade_id:
+		"movement_speed":
+			var artifact_speed := _artifact_multiplier("move_speed")
+			return {
+				"id": upgrade_id,
+				"name": "机动调优  STACK %d → %d" % [current, next],
+				"title": "移动速度叠加至 %d 层" % next,
+				"description": "实际移动速度 %d → %d px/s · 本成长极限 +60%%（神器独立乘区）· 无限叠加" % [int(career_move_speed_base * _movement_multiplier_for_level(current) * artifact_speed), int(career_move_speed_base * _movement_multiplier_for_level(next) * artifact_speed)],
+				"color": Color("55e7c2"),
+			}
+		"career_skill_rate":
+			return {
+				"id": upgrade_id,
+				"name": "小技能冷却  STACK %d → %d" % [current, next],
+				"title": "小技能调度叠加至 %d 层" % next,
+				"description": "职业小技能 CD %.2f → %.2fs · 当前冷却按进度同步压缩 · 无限叠加" % [_career_skill_cooldown_for_level(current), _career_skill_cooldown_for_level(next)],
+				"color": Color("70caff"),
+			}
+		"career_ultimate_rate":
+			return {
+				"id": upgrade_id,
+				"name": "大招冷却  STACK %d → %d" % [current, next],
+				"title": "大招调度叠加至 %d 层" % next,
+				"description": "职业大招 CD %.1f → %.1fs · 保留 18 秒安全下限 · 无限叠加" % [_career_ultimate_cooldown_for_level(current), _career_ultimate_cooldown_for_level(next)],
+				"color": Color("ffd36a"),
+			}
+	if _is_combat_weapon(upgrade_id) or upgrade_id in ["idempotency", "iac", "arch_oncall", "arch_zero_trust", "arch_query", "arch_autoscale"]:
+		return combat.call("get_upgrade_card", upgrade_id)
 	match upgrade_id:
 		"runbook":
 			return {
@@ -1249,9 +1726,15 @@ func _decorate_upgrade_card(source: Dictionary) -> Dictionary:
 		rarity_tier = 1
 	card["rarity_tier"] = rarity_tier
 	card["rarity"] = ["标准变更", "高级变更", "核心变更", "进化协议"][rarity_tier]
-	card["choice_kind"] = "evolution" if upgrade_id == "iac" else ("weapon" if _is_combat_weapon(upgrade_id) else "method")
+	card["choice_kind"] = "evolution" if upgrade_id == "iac" else ("signature" if _is_signature_upgrade(upgrade_id) else ("career" if _is_career_upgrade(upgrade_id) else ("weapon" if _is_combat_weapon(upgrade_id) else "method")))
 	card["is_new"] = _is_combat_weapon(upgrade_id) and current == 0
-	card["slot_text"] = "新技能 · 占用常规槽" if bool(card["is_new"]) else ("已安装 · 继续叠层" if _is_combat_weapon(upgrade_id) else "方法论 · 全局生效")
+	card["slot_text"] = "固有普攻 · 无限成长 · 不占技能槽" if _is_signature_upgrade(upgrade_id) else ("职业主动专精 · 不占技能槽" if _is_career_upgrade(upgrade_id) else ("全局成长 · 无限叠加 · 不占技能槽" if upgrade_id in ["movement_speed", "career_skill_rate", "career_ultimate_rate"] else ("新技能 · 占用常规槽" if bool(card["is_new"]) else ("已安装 · 无限叠层" if _is_combat_weapon(upgrade_id) else "方法论 · 全局生效"))))
+	if _is_signature_upgrade(upgrade_id):
+		card["career_fit"] = true
+		card["rarity"] = "%s · 岗位固有" % card["rarity"]
+	if _is_career_upgrade(upgrade_id):
+		card["career_fit"] = true
+		card["rarity"] = "%s · 岗位主动" % card["rarity"]
 	if upgrade_id in _career_affinity_ids():
 		card["career_fit"] = true
 		card["rarity"] = "%s · 岗位专精" % card["rarity"]
@@ -1275,12 +1758,22 @@ func _decorate_architecture_card(source: Dictionary) -> Dictionary:
 
 func _upgrade_meta(upgrade_id: String) -> Dictionary:
 	match upgrade_id:
+		"movement_speed": return {"route": "通用调度", "archetype": "机动 / 走位", "icon": "MOVE", "synergy": "提高走位与脱离地板技能的能力，保留安全速度上限"}
+		"career_skill_rate": return {"route": "职业调度", "archetype": "小技能 / 冷却", "icon": "Q-CD", "synergy": "缩短当前职业小技能冷却，不影响大招"}
+		"career_ultimate_rate": return {"route": "职业调度", "archetype": "大招 / 冷却", "icon": "R-CD", "synergy": "缩短当前职业大招冷却，保留持续技能的安全窗口"}
+		"delivery_sync_reserve": return {"route": "实施交付", "archetype": "Q / 独立充能", "icon": "Q+", "synergy": "增加跨组联调储备次数；每层冷却独立推进"}
+		"delivery_sync_parallel": return {"route": "实施交付", "archetype": "Q / 并行支援", "icon": "xN", "synergy": "一次联调召集更多职业剪影，加快联合验收"}
+		"delivery_release_burn_down": return {"route": "实施交付", "archetype": "Q→R / 击杀联动", "icon": "R-", "synergy": "Q 击杀缓慢燃尽大招冷却；每次施放有独立削减上限"}
+		"signature_rate": return {"route": "当前职业", "archetype": "固有普攻 / 频率", "icon": "CD", "synergy": "缩短自动攻击间隔；高频层同时转化为超频效率"}
+		"signature_quantity": return {"route": "当前职业", "archetype": "固有普攻 / 数量", "icon": "xN", "synergy": "增加职业专属实体或命中数；超出实体预算转为协同伤害"}
+		"signature_damage": return {"route": "当前职业", "archetype": "固有普攻 / 攻击", "icon": "DMG", "synergy": "只强化职业固有自动攻击，不改变小技能与大招"}
+		"signature_area": return {"route": "当前职业", "archetype": "固有普攻 / 范围", "icon": "AOE", "synergy": "扩大近战、射程、半径、墙长或召唤编队"}
 		"bash": return {"route": "运维开发", "archetype": "远程 / 连锁", "icon": "$_", "synergy": "叠加幂等性后可进化为 IaC 闭环"}
 		"ping": return {"route": "网络工程", "archetype": "脉冲 / 全域", "icon": "ICMP", "synergy": "适合外圈清场，与规则链形成双层防线"}
 		"firewall": return {"route": "安全运维", "archetype": "领域 / 击退", "icon": "WAF", "synergy": "靠近敌群收益最高，容量规划提高容错"}
 		"log": return {"route": "SRE / NOC", "archetype": "间接 / 爆破", "icon": "LOG", "synergy": "随机覆盖密集故障，适合根因清场"}
 		"wrench": return {"route": "IT 运维", "archetype": "近战 / 横扫", "icon": "TOOL", "synergy": "必须贴身走位；现场值守协议强化连击"}
-		"rule_chain": return {"route": "安全运维", "archetype": "环绕 / 碰撞", "icon": "ACL", "synergy": "用环绕实体切割敌群；零信任边界增加节点"}
+		"rule_chain": return {"route": "安全运维", "archetype": "环绕 / 碰撞", "icon": "ACL", "synergy": "每阶同时增加节点、轨道与单节点碰撞范围；零信任边界进一步扩容"}
 		"lock_zone": return {"route": "DBA", "archetype": "陷阱 / 控场", "icon": "SQL", "synergy": "边移动边布点，把敌群引入慢查询锁域"}
 		"worker": return {"route": "AI Infra", "archetype": "召唤 / 自主", "icon": "POD", "synergy": "Worker 独立编队齐射；弹性集群增加副本"}
 		"idempotency": return {"route": "运维开发", "archetype": "策略 / 进化", "icon": "IDEM", "synergy": "Bash STACK 3 + 幂等性可触发 IaC"}
@@ -1298,6 +1791,14 @@ func _upgrade_meta(upgrade_id: String) -> Dictionary:
 func _is_combat_weapon(upgrade_id: String) -> bool:
 	var ids: Array[String] = combat.call("get_weapon_upgrade_ids")
 	return upgrade_id in ids
+
+
+func _is_signature_upgrade(upgrade_id: String) -> bool:
+	return bool(career_actions.call("is_signature_upgrade", upgrade_id))
+
+
+func _is_career_upgrade(upgrade_id: String) -> bool:
+	return bool(career_actions.call("is_career_upgrade", upgrade_id))
 
 
 func _regular_combat_slot_count() -> int:
@@ -1393,14 +1894,37 @@ func _on_build_changed(summary: String) -> void:
 
 func _refresh_build_summary() -> void:
 	var methods: Array[String] = []
+	if movement_speed_level > 0: methods.append("移动 ×%d" % movement_speed_level)
+	if career_skill_rate_level > 0: methods.append("小技能CD ×%d" % career_skill_rate_level)
+	if career_ultimate_rate_level > 0: methods.append("大招CD ×%d" % career_ultimate_rate_level)
 	if runbook_level > 0: methods.append("Runbook ×%d" % runbook_level)
 	if capacity_level > 0: methods.append("容量 ×%d" % capacity_level)
 	if redundancy_level > 0: methods.append("冗余 ×%d（剩余%d次）" % [redundancy_level, redundancy_charges])
+	if career_id == "delivery":
+		var reserve_level := int(career_actions.call("get_career_upgrade_level", "delivery_sync_reserve"))
+		var parallel_level := int(career_actions.call("get_career_upgrade_level", "delivery_sync_parallel"))
+		var burn_level := int(career_actions.call("get_career_upgrade_level", "delivery_release_burn_down"))
+		if reserve_level > 0: methods.append("联调储备 ×%d" % reserve_level)
+		if parallel_level > 0: methods.append("并行会签 ×%d" % parallel_level)
+		if burn_level > 0: methods.append("发布燃尽 ×%d" % burn_level)
 	var action_snapshot: Dictionary = career_actions.call("get_action_snapshot")
 	var signature_name := String(action_snapshot.get("signature", {}).get("name", "职业固有攻击"))
-	var summary := "%s · %s\n固有攻击 · %s\n%s" % [String(career.get("name", "运维工程师")), String(career.get("badge", "OPS")), signature_name, combat_build_summary]
+	var growth: Dictionary = action_snapshot.get("signature", {}).get("growth", {})
+	var growth_levels: Dictionary = growth.get("levels", {})
+	var signature_growth_text := "频率×%d · 数量×%d · 攻击×%d · 范围×%d" % [
+		int(growth_levels.get("rate", 0)),
+		int(growth_levels.get("quantity", 0)),
+		int(growth_levels.get("damage", 0)),
+		int(growth_levels.get("area", 0)),
+	]
+	var summary := "%s · %s\n固有攻击 · %s\n普攻成长 · %s\n%s" % [String(career.get("name", "运维工程师")), String(career.get("badge", "OPS")), signature_name, signature_growth_text, combat_build_summary]
 	if not methods.is_empty():
 		summary += "\n" + "  |  ".join(methods)
+	if not equipped_artifact_ids.is_empty():
+		var artifact_names: Array[String] = []
+		for artifact_id in equipped_artifact_ids:
+			artifact_names.append(String(ArtifactCatalog.get_by_id(artifact_id).get("name", artifact_id)))
+		summary += "\n神器：" + "  |  ".join(artifact_names)
 	hud.update_build(summary)
 	if hud.has_method("update_skill_loadout"):
 		hud.call("update_skill_loadout", _skill_loadout_for_hud())
@@ -1411,7 +1935,8 @@ func _skill_loadout_for_hud() -> Array[Dictionary]:
 	var action_snapshot: Dictionary = career_actions.call("get_action_snapshot")
 	var signature: Dictionary = action_snapshot.get("signature", {})
 	if not signature.is_empty():
-		loadout.append({"id": String(signature.get("icon", "wrench")), "level": 1, "name": "固有攻击 · %s" % String(signature.get("name", "职业攻击")), "signature": true})
+		var signature_level := int(signature.get("level", 1))
+		loadout.append({"id": String(signature.get("icon", "wrench")), "level": signature_level, "name": "固有攻击 · %s · 无限成长" % String(signature.get("name", "职业攻击")), "signature": true})
 	for upgrade_id in combat.call("get_weapon_upgrade_ids"):
 		var level_value := int(combat.call("get_upgrade_level", String(upgrade_id)))
 		if level_value <= 0:

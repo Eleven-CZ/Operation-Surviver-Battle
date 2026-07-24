@@ -17,6 +17,7 @@ var slow_multiplier := 1.0
 var slow_source := ""
 var input_enabled := true
 var damage_reduction := 0.0
+var temporary_damage_reduction := 0.0
 var career_id := "ops"
 var career_badge := "OPS"
 var career_accent := Color("22d7d0")
@@ -59,7 +60,7 @@ func _physics_process(delta: float) -> void:
 func take_damage(amount: float) -> bool:
 	if invulnerability_left > 0.0 or health <= 0.0:
 		return false
-	var resolved_damage := amount * (1.0 - clampf(damage_reduction, 0.0, 0.75))
+	var resolved_damage := amount * (1.0 - clampf(damage_reduction + temporary_damage_reduction, 0.0, 0.75))
 	health = maxf(0.0, health - resolved_damage)
 	invulnerability_left = 0.42
 	health_changed.emit(health, max_health)
@@ -88,6 +89,10 @@ func get_facing_direction() -> Vector2:
 
 func grant_invulnerability(duration: float) -> void:
 	invulnerability_left = maxf(invulnerability_left, duration)
+
+
+func set_temporary_damage_reduction(amount: float) -> void:
+	temporary_damage_reduction = clampf(amount, 0.0, 0.50)
 
 
 func perform_dash(direction: Vector2, distance: float, invulnerability: float = 0.45) -> Dictionary:

@@ -11,6 +11,7 @@ func _initialize() -> void:
 
 func _run() -> void:
 	var profile := get_root().get_node("ProfileStore")
+	var director := get_root().get_node("AudioDirector")
 	profile.reset_for_tests()
 	var menu: Control = load("res://scenes/main_menu.tscn").instantiate()
 	get_root().add_child(menu)
@@ -34,6 +35,21 @@ func _run() -> void:
 	_require(_unlocked_career_count(profile) == CareerCatalog.ids().size(), "repeated cheat code does not duplicate careers")
 	_require(_unlocked_difficulty_count(profile) == DifficultyCatalog.ids().size(), "repeated cheat code does not duplicate difficulties")
 	_require(menu.content_box.get_global_rect().end.y <= 696.5, "home page cheat terminal fits the 1280x720 content frame")
+	profile.discover_fault_kind(0)
+	profile.discover_fault_kind(7)
+	profile.discover_artifact("rm_rf")
+	menu.call("_show_museum", "fault")
+	var museum_snapshot: Dictionary = menu.call("get_museum_ui_snapshot")
+	_require(int(museum_snapshot.get("category_count", 0)) == 3, "museum exposes fault, boss, and artifact archives")
+	_require(String(museum_snapshot.get("category", "")) == "fault" and int(museum_snapshot.get("entry_count", 0)) == 7, "fault archive lists five normal and two elite faults")
+	_require(String(menu.museum_entry_buttons["http_404"].text).contains("404"), "encountered fault reveals its archive identity")
+	menu.call("_show_museum", "boss")
+	_require(int(menu.call("get_museum_ui_snapshot").get("entry_count", 0)) == 1, "boss archive lists the incident core")
+	_require(String(menu.museum_entry_buttons["incident_core"].text).contains("FATAL"), "encountered boss reveals its archive identity")
+	menu.call("_show_museum", "artifact")
+	_require(int(menu.call("get_museum_ui_snapshot").get("entry_count", 0)) == 12, "artifact archive lists the complete catalog")
+	_require(String(menu.museum_entry_buttons["rm_rf"].text).contains("RM -RF"), "obtained artifact reveals its effect archive")
+	_require(menu.museum_entry_buttons["rm_rf"].icon != null, "artifact archive uses the generated icon")
 	var emblem_regions: Array[Rect2] = []
 	for career_id in CareerCatalog.ids():
 		var emblem: Texture2D = menu.call("_career_emblem_texture", career_id)
@@ -66,6 +82,13 @@ func _run() -> void:
 	_require(menu.content_box.get_child_count() >= 3, "permanent upgrade store opens")
 	menu.call("_show_settings")
 	_require(menu.content_box.get_child_count() >= 2, "settings menu opens")
+	_require(menu.settings_music_style_option != null and menu.settings_music_style_option.item_count == 4, "settings exposes two imported BGM tracks and both original suites")
+	menu.settings_music_style_option.select(1)
+	menu.settings_music_style_option.item_selected.emit(1)
+	_require(String(profile.get_settings().get("music_style", "")) == "suno_02" and String(director.call("get_music_style")) == "suno_02", "settings persists and immediately auditions BGM02")
+	menu.settings_music_style_option.select(0)
+	menu.settings_music_style_option.item_selected.emit(0)
+	_require(String(profile.get_settings().get("music_style", "")) == "suno_01" and String(director.call("get_music_style")) == "suno_01", "settings can restore BGM01 as the default")
 	get_root().remove_child(menu)
 	menu.free()
 
@@ -80,7 +103,7 @@ func _run() -> void:
 	_require(String(run.get_node("HUD").modal_mode).is_empty(), "pause overlay closes")
 	get_root().remove_child(run)
 	run.free()
-	print("MENU_FLOW_TEST_PASS tabs=4 pause=ok")
+	print("MENU_FLOW_TEST_PASS tabs=5 museum=ok pause=ok")
 	quit(0)
 
 

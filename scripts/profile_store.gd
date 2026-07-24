@@ -3,13 +3,16 @@ extends Node
 const CareerCatalog := preload("res://scripts/career_catalog.gd")
 const EventCatalog := preload("res://scripts/event_catalog.gd")
 const DifficultyCatalog := preload("res://scripts/difficulty_catalog.gd")
+const ArtifactCatalog := preload("res://scripts/artifact_catalog.gd")
+const FaultCatalog := preload("res://scripts/fault_catalog.gd")
 
 signal profile_changed
 signal career_unlocked(career_id: String)
 signal difficulty_unlocked(difficulty_id: String)
+signal museum_entry_unlocked(category: String, entry_id: String)
 
 const SAVE_PATH := "user://profile_v1.json"
-const SCHEMA_VERSION := 3
+const SCHEMA_VERSION := 6
 
 var data: Dictionary = {}
 var session_career_id := "ops"
@@ -22,8 +25,7 @@ var test_mode := false
 func _ready() -> void:
 	test_mode = OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--profile-test")
 	_load_profile()
-	var stored_volume := clampf(float(Dictionary(data.get("settings", {})).get("master_volume", 0.85)), 0.0, 1.0)
-	AudioServer.set_bus_volume_db(0, linear_to_db(stored_volume))
+	apply_audio_settings()
 	session_career_id = String(data.get("last_career", "ops"))
 	if not is_career_unlocked(session_career_id):
 		session_career_id = "ops"
@@ -45,13 +47,14 @@ func _default_data() -> Dictionary:
 		"career_mastery": {"ops": 0},
 		"permanent_upgrades": {"health": 0, "telemetry": 0, "reroll": 0, "mobility": 0},
 		"stats": {"runs": 0, "wins": 0, "closed": 0, "elites": 0, "allies": 0, "protocols": 0, "best_level": 1},
-		"settings": {"master_volume": 0.85, "fault_labels": true, "high_contrast": false},
+		"settings": {"master_volume": 0.85, "music_volume": 0.76, "sfx_volume": 0.86, "music_style": "suno_01", "fault_labels": true, "high_contrast": false},
 		"last_career": "ops",
 		"last_event": "release",
 		"unlocked_difficulties": ["normal"],
 		"last_difficulty": "normal",
 		"difficulty_stats": _default_difficulty_stats(),
 		"event_stats": _default_event_stats(),
+		"museum_unlocks": {"fault": [], "boss": [], "artifact": []},
 		"committed_run_ids": [],
 	}
 
@@ -83,6 +86,7 @@ func _load_profile() -> void:
 
 
 func _merge_profile(saved: Dictionary) -> void:
+	var saved_schema := int(saved.get("schema_version", 0))
 	for key in ["runbook_points", "last_career", "last_event", "last_difficulty"]:
 		if saved.has(key):
 			data[key] = saved[key]
@@ -120,6 +124,19 @@ func _merge_profile(saved: Dictionary) -> void:
 				difficulty_stat.merge(saved_difficulty_stats[difficulty_id], true)
 				merged_difficulty_stats[difficulty_id] = difficulty_stat
 		data["difficulty_stats"] = merged_difficulty_stats
+	if saved.get("museum_unlocks") is Dictionary:
+		var saved_museum: Dictionary = saved["museum_unlocks"]
+		var merged_museum: Dictionary = data["museum_unlocks"]
+		for category in ["fault", "boss", "artifact"]:
+			var valid_ids := _museum_valid_ids(category)
+			var unlocked: Array[String] = []
+			if saved_museum.get(category) is Array:
+				for entry_value in saved_museum[category]:
+					var entry_id := String(entry_value)
+					if entry_id in valid_ids and entry_id not in unlocked:
+						unlocked.append(entry_id)
+			merged_museum[category] = unlocked
+		data["museum_unlocks"] = merged_museum
 	if "ops" not in data["unlocked_careers"]:
 		data["unlocked_careers"].append("ops")
 	if String(data.get("last_event", "release")) not in EventCatalog.ids():
@@ -128,6 +145,15 @@ func _merge_profile(saved: Dictionary) -> void:
 		data["unlocked_difficulties"].push_front("normal")
 	if String(data.get("last_difficulty", "normal")) not in DifficultyCatalog.ids() or not is_difficulty_unlocked(String(data.get("last_difficulty", "normal"))):
 		data["last_difficulty"] = "normal"
+	var settings: Dictionary = data.get("settings", {})
+	var saved_music_style := String(settings.get("music_style", "suno_01"))
+	if saved_music_style not in ["suno_01", "suno_02", "pulse", "ambient"]:
+		settings["music_style"] = "suno_01"
+	elif saved_schema < 5 and saved_music_style == "pulse":
+		# Pulse was a project default rather than a player-selected import. Move
+		# existing profiles to the new requested BGM01 default once on upgrade.
+		settings["music_style"] = "suno_01"
+	data["settings"] = settings
 	data["schema_version"] = SCHEMA_VERSION
 
 
@@ -162,6 +188,48 @@ func get_settings() -> Dictionary:
 
 func get_permanent_upgrades() -> Dictionary:
 	return Dictionary(data.get("permanent_upgrades", {})).duplicate()
+
+
+func get_museum_unlocks() -> Dictionary:
+	return Dictionary(data.get("museum_unlocks", {"fault": [], "boss": [], "artifact": []})).duplicate(true)
+
+
+func is_museum_unlocked(category: String, entry_id: String) -> bool:
+	var museum: Dictionary = data.get("museum_unlocks", {})
+	return entry_id in museum.get(category, [])
+
+
+func unlock_museum_entry(category: String, entry_id: String) -> bool:
+	if entry_id not in _museum_valid_ids(category) or is_museum_unlocked(category, entry_id):
+		return false
+	var museum: Dictionary = data.get("museum_unlocks", {"fault": [], "boss": [], "artifact": []})
+	var unlocked: Array = museum.get(category, [])
+	unlocked.append(entry_id)
+	museum[category] = unlocked
+	data["museum_unlocks"] = museum
+	save_profile()
+	museum_entry_unlocked.emit(category, entry_id)
+	profile_changed.emit()
+	return true
+
+
+func discover_fault_kind(kind: int) -> bool:
+	var fault_id := FaultCatalog.id_for_kind(kind)
+	if fault_id.is_empty():
+		return false
+	return unlock_museum_entry(FaultCatalog.category_for_kind(kind), fault_id)
+
+
+func discover_artifact(artifact_id: String) -> bool:
+	return unlock_museum_entry("artifact", artifact_id)
+
+
+func _museum_valid_ids(category: String) -> Array[String]:
+	match category:
+		"fault": return FaultCatalog.fault_ids()
+		"boss": return FaultCatalog.boss_ids()
+		"artifact": return ArtifactCatalog.ids()
+	return []
 
 
 func get_event_stats(event_id: String = "") -> Dictionary:
@@ -344,10 +412,28 @@ func set_setting(setting_id: String, value: Variant) -> void:
 	var settings: Dictionary = data["settings"]
 	settings[setting_id] = value
 	data["settings"] = settings
-	if setting_id == "master_volume":
-		AudioServer.set_bus_volume_db(0, linear_to_db(clampf(float(value), 0.0, 1.0)))
+	if setting_id in ["master_volume", "music_volume", "sfx_volume"]:
+		apply_audio_settings()
+	elif setting_id == "music_style" and is_instance_valid(AudioDirector) and AudioDirector.has_method("set_music_style"):
+		AudioDirector.call("set_music_style", String(value))
 	save_profile()
 	profile_changed.emit()
+
+
+func apply_audio_settings() -> void:
+	var settings := get_settings()
+	_set_bus_linear("Master", float(settings.get("master_volume", 0.85)))
+	_set_bus_linear("Music", float(settings.get("music_volume", 0.76)))
+	_set_bus_linear("SFX", float(settings.get("sfx_volume", 0.86)))
+	_set_bus_linear("UI", float(settings.get("sfx_volume", 0.86)))
+
+
+func _set_bus_linear(bus_name: String, linear_value: float) -> void:
+	var bus_index := AudioServer.get_bus_index(bus_name)
+	if bus_index < 0:
+		return
+	var clamped := clampf(linear_value, 0.0, 1.0)
+	AudioServer.set_bus_volume_db(bus_index, linear_to_db(clamped) if clamped > 0.0 else -80.0)
 
 
 func _event_id_from_result(event_result: Dictionary) -> String:

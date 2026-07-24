@@ -3,19 +3,9 @@ extends Node2D
 signal shell_resolved
 signal ally_joined
 
+const CoworkerCatalog := preload("res://scripts/coworker_catalog.gd")
 const COWORKER_SPRITES := preload("res://assets/generated/coworker_sprites_4x2.png")
 const UI_FONT := preload("res://assets/fonts/NotoSansSC-VF.ttf")
-const PERSONA_ORDER: Array[String] = ["hr", "finance", "product", "frontend", "backend", "leader", "customer", "supervisor"]
-const PERSONA_NAMES := {
-	"hr": "HR 伙伴",
-	"finance": "财务伙伴",
-	"product": "产品经理",
-	"frontend": "前端开发",
-	"backend": "后端开发",
-	"leader": "业务领导",
-	"customer": "客户代表",
-	"supervisor": "技术主管",
-}
 
 var player: Node2D
 var active := false
@@ -39,12 +29,16 @@ func configure_career(career: Dictionary) -> void:
 
 
 func set_persona(value: String) -> void:
-	persona_id = value if value in PERSONA_ORDER else "product"
+	persona_id = value if value in CoworkerCatalog.ids() else "product"
 	queue_redraw()
 
 
 func get_persona_name() -> String:
-	return String(PERSONA_NAMES.get(persona_id, "协作伙伴"))
+	return String(CoworkerCatalog.get_by_id(persona_id).get("name", "协作伙伴"))
+
+
+func get_persona_definition() -> Dictionary:
+	return CoworkerCatalog.get_by_id(persona_id).duplicate(true)
 
 
 func start_projection(world_position: Vector2) -> void:
@@ -99,10 +93,17 @@ func _draw() -> void:
 		return
 	_draw_pixel_ellipse(Vector2(0, 25), Vector2(20, 7), Color(0.0, 0.0, 0.0, 0.46))
 	var cell_size := Vector2(float(COWORKER_SPRITES.get_width()) / 4.0, float(COWORKER_SPRITES.get_height()) / 2.0)
-	var persona_index := maxi(0, PERSONA_ORDER.find(persona_id))
+	var definition := CoworkerCatalog.get_by_id(persona_id)
+	var persona_index := clampi(int(definition.get("sprite_index", 2)), 0, 7)
 	var source := Rect2(Vector2(float(persona_index % 4), floor(float(persona_index) / 4.0)) * cell_size, cell_size)
 	var destination := Rect2(Vector2(-43, -65), Vector2(86, 121))
 	draw_texture_rect_region(COWORKER_SPRITES, destination, source, Color(0.72, 1.0, 0.90, 1.0) if ally else Color.WHITE)
+	if persona_id == "qa":
+		# QA shares the current tablet silhouette but remains unmistakable in play.
+		var badge_color := CoworkerCatalog.color_for(persona_id)
+		draw_rect(Rect2(Vector2(-31, -58), Vector2(28, 17)), Color(0.02, 0.11, 0.09, 0.92), true)
+		draw_rect(Rect2(Vector2(-31, -58), Vector2(28, 17)), badge_color, false, 2.0)
+		draw_string(UI_FONT, Vector2(-27, -45), "QA", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, badge_color)
 	if not shell_broken:
 		var ratio := shell_health / shell_maximum
 		draw_circle(Vector2(0, -3), 47.0, Color(0.75, 0.2, 0.72, 0.16))

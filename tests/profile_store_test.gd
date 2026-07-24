@@ -13,7 +13,18 @@ func _run() -> void:
 	_require(profile.get_points() == 0, "new profile starts at 0 RP")
 	_require(profile.is_career_unlocked("ops"), "ops is unlocked by default")
 	_require(not profile.is_career_unlocked("dba"), "advanced careers start locked")
-	_require(int(profile.data.get("schema_version", 0)) == 3, "profile uses schema v3")
+	_require(int(profile.data.get("schema_version", 0)) == 6, "profile uses schema v6")
+	_require(not profile.is_museum_unlocked("fault", "http_404"), "museum entries start undiscovered")
+	_require(profile.discover_fault_kind(0), "encountering a normal fault unlocks its museum record")
+	_require(profile.is_museum_unlocked("fault", "http_404"), "normal fault discovery persists in profile data")
+	_require(profile.discover_fault_kind(7), "encountering the incident core unlocks the boss record")
+	_require(profile.is_museum_unlocked("boss", "incident_core"), "boss discovery uses the dedicated museum category")
+	_require(profile.discover_artifact("rm_rf"), "equipping an artifact unlocks its museum record")
+	_require(profile.is_museum_unlocked("artifact", "rm_rf"), "artifact discovery persists in profile data")
+	_require(not profile.discover_artifact("rm_rf"), "repeated museum discovery is idempotent")
+	_require(String(profile.get_settings().get("music_style", "")) == "suno_01", "new profiles default to BGM01")
+	profile.call("_merge_profile", {"schema_version": 4, "settings": {"music_style": "pulse"}})
+	_require(String(profile.get_settings().get("music_style", "")) == "suno_01", "legacy pulse defaults migrate to BGM01")
 	_require(profile.session_event_id == "release", "release is the default selected event")
 	_require(profile.session_difficulty_id == "normal" and profile.is_difficulty_unlocked("normal"), "normal is the default unlocked difficulty")
 	_require(not profile.select_difficulty("advanced"), "a locked difficulty cannot be selected")
@@ -134,7 +145,7 @@ func _run() -> void:
 	_require(int(cheat_unlocks["careers"]) == 9 and int(cheat_unlocks["difficulties"]) == 3, "unlock-all progression opens all careers and difficulties")
 	for difficulty_id in DifficultyCatalog.ids():
 		_require(profile.is_difficulty_unlocked(difficulty_id), "%s is available after unlock-all progression" % difficulty_id)
-	print("PROFILE_REWARD_TEST_PASS schema=3 structured=%d legacy=%d difficulties=4" % [int(settlement["total"]), int(legacy_settlement["total"])])
+	print("PROFILE_REWARD_TEST_PASS schema=6 structured=%d legacy=%d difficulties=4 museum=ok" % [int(settlement["total"]), int(legacy_settlement["total"])])
 	quit(0)
 
 

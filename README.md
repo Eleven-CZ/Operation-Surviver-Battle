@@ -62,9 +62,9 @@ Godot 4.7.1 的高俯视 2D Survivor-like 可玩原型。当前版本已经形�
 - 难度同时影响开场数量、持续出怪、敌人上限、普通/精英/Boss 的生命伤害速度、精英编队、技能频率、事件波次、Boss 分诊和恢复验证；“这不可能”可容纳 2000 个敌人、整局约 84 只精英与 25,600 HP 的事故核心。
 - 10 个可选职业：运维工程师、DBA、网络工程师、安全运维、IT 运维、Helpdesk、运维开发、SRE、实施交付、AI Infra。
 - 每个职业拥有不占构筑槽的独立固有攻击、短 CD 小技能、长 CD 大招，以及属性曲线、压力投影效率、像素轮廓和岗位专精选项。
-- 每个职业还有常驻 HUD 的独立协议：跨域联动、事务 COMMIT、链路收敛、自动隔离、现场处置、SLA 批次、幂等重试、错误预算、验收里程碑或自动扩缩容；这些协议均有实际触发效果，不是说明文字。
+- 每个职业还有常驻 HUD 的独立协议：跨域联动、事务 COMMIT、链路收敛、自动隔离、现场处置、SLA 批次、幂等重试、错误预算、验收里程碑或 KV Cache；这些协议均有实际触发效果，不是说明文字。
 - AI 生成的十职业像素徽记同时用于职业档案、值班大厅与战斗 HUD；运行时从统一 5×2 图集裁切，避免重复纹理。
-- 岗位专精会稳定出现在局内三选一中；Lv.3 / Lv.7 的架构选择也会保证出现该职业的推荐架构，同时允许跨职业构筑。
+- 局内三选一从当前全部合格卡牌中等概率、无放回抽取，不再强制塞入固有普攻、岗位专精或推荐架构；每次构筑都可能走向不同路线。
 - 复盘点 `RP` 来自遥测闭环、精英故障、War Room 协作、发布窗口、岗位协议执行和恢复验证；失败也有最低复盘保底。
 - 直接全量发布成功会获得额外高风险变更奖励；同一个 `run_id` 只能结算一次。
 - 职业通过公开的局内挑战横向解锁，不花 RP；RP 只投入容量、遥测、重新评审和移动动线四类永久能力。
@@ -89,15 +89,19 @@ Godot 4.7.1 的高俯视 2D Survivor-like 可玩原型。当前版本已经形�
 | IT 运维 | 备件节点：可修复服务并周期放电 | 整机热插拔（10s） | 机房总控（54s） |
 | Helpdesk | 工单分派：多目标自动弹跳 | 远程协助（12s） | SLA 绿色通道（49s） |
 | 运维开发 | 幂等脚本：命中位置重复执行 | CI Runner（10s） | 全量 IaC Apply（51s） |
-| SRE | SLO 预算环：按健康度切换伤害 / 恢复 | 流量切换（11s） | 错误预算冻结（56s） |
-| 实施交付 | 发布包：延迟 AOE + UAT 验收区 | 蓝绿切换（12s） | 全量上线：三阶段扩张（52s） |
-| AI Infra | Worker Pod：自主编队独立齐射 | Pod 迁移（11s） | GPU 集群扩容（55s） |
+| SRE | 关键路径 Trace：高伤害采样、SPAN 留痕、折线反向回滚并重击根因 | 流量切换：高伤害主备站数据链路（10s） | 全站多活：历史容灾站并发 Trace（58s） |
+| 实施交付 | 发布包：延迟 AOE + UAT 验收区 | 跨组联调：默认独立储备 2 次、轮换召集职业剪影（每层 10s） | 全员到场：十职业固有普攻 ×3（58s） |
+| AI Infra | Tensor Pipeline：双 Token 四阶段推理、击杀后残差转交 | Pipeline Flush：三通道四阶段贯穿（10s） | 基础模型上线：Prefill / Decode / EOS 全屏推理（60s） |
 
 - 进化：Bash Lv.3 + 幂等性 → 基础设施即代码。
 - Lv.3 / Lv.7 触发“岗位架构”三选一，可选择现场值守、零信任边界、查询治理或弹性训练集群；同一架构可叠至 II 阶，也可混合两条路线。
 - 升级界面使用横向三张大卡，显示稀有度、岗位、攻击几何、协同提示、槽位状态，并提供每局 2 次重新评审。
-- 升级采用叠层制：每次选择会同时强化伤害、频率、范围和并发中的多个维度；升级卡直接显示前后数值。
-- 可见叠层：Bash 增加并发光束，Ping 增加回波，防火墙增加常驻规则环，日志采集增加并行落点。
+- 职业固有普攻的伤害、频率、范围和并发均可无限叠加；范围升级会按各职业真实攻击几何同步放大碰撞与预览特效。
+- 通用成长加入移动速度、职业小技能 CD 和大招 CD，采用有安全下限的无限渐近曲线；升级卡直接显示前后实际数值。
+- 实施交付拥有三张岗位主动专精卡：`联调排期` 将 Q 独立储备从 2 提升至最多 4 次，`并行会签` 将单次到场剪影从 1 提升至最多 4 位，`发布燃尽` 共 5 阶，使 Q 击杀削减 R 0.12–0.36 秒，并将单次 Q 总削减限制在 1.2–3.6 秒。
+- 精英有 50% / 40% / 30% / 20%（普通至“这不可能”）概率掉落神器；每局最多装备 2 件。当前包含 `RM -RF`、`DELETE * FROM incidents`、重装系统、重启设备、删库跑路、`kill -9`、回滚上一版、`sudo !!` 等 12 件运维梗神器。每件神器拥有独立生成图标，掉落时通过三窗协议老虎机滚动揭晓，最终停在实际掉落结果上。
+- 主菜单加入故障博物馆，分为小怪与精英、Boss、神器三类；故障和 Boss 在实际遭遇后解锁，神器在拾取安装后解锁，发现状态写入个人档案长期保存。
+- 可见叠层：Bash 增加并发光束，Ping 增加回波，防火墙增加常驻规则环，日志采集增加并行落点；iptables 规则链前五阶每次都会增加环绕节点，并同步扩大轨道与单节点碰撞范围。
 - 方法论同样可以叠加：Runbook、容量规划、冗余设计与幂等性均有明确层数和上限。
 - 四类事件合同：线上发布、版本更新、线上救火、备份恢复演练；每类事件都有 3 个风险 / 收益不同的处置策略和独立目标。
 - 同事采用“压力投影，解决后变盟友”：线上发布对应产品经理、版本更新对应后端开发、线上救火对应客户、备份恢复对应财务；解除压力外壳并完成标准对齐后加入 War Room。
@@ -110,11 +114,20 @@ Godot 4.7.1 的高俯视 2D Survivor-like 可玩原型。当前版本已经形�
 - `fault_sprites_4x2.png`：404、NXDOMAIN、ENOSPC、BUG、408，以及 502、OOM 137 和 FATAL Boss。
 - `coworker_sprites_4x2.png`：HR、财务、产品、前后端、领导、客户和主管压力投影 / 盟友角色。
 - `skill_icons_5x2.png`：Bash、Ping、防火墙、日志、扳手、规则链、锁域、Worker、Runbook 和冗余技能图标。
+- `artifacts/*.png`：12 件神器独立的 256×256 像素科技卡图标，用于地面掉落、HUD、老虎机与博物馆。
 - `combat_hud_overlay.png`：生命 / 经验框、Boss 警报、雷达、事件框、同事状态条和五槽技能托盘的像素装饰层；实际数值与交互仍由 Godot 原生控件驱动。
 
 所有最终图、生成提示词、原始来源路径、请求编号和 SHA-256 都登记在 `ASSET_LICENSES.csv`。游戏运行时只引用 `res://assets/generated/` 下的最终资产。
 
 本轮实机验收图保存在 `docs/screenshots/`：除战斗层级、职业档案和两类三选一外，还包含运维近战、网络抓包 / 风暴、安全范围墙 / 封禁三张职业动作图，均由 Godot 运行时直接截取。
+
+## 原创动态音频
+
+- `assets/audio/bgm/user/bgm01.ogg` 现为默认背景音乐并覆盖大厅、常规战斗、特殊事件、FATAL Boss、恢复验证；第二首用户曲也以 OGG 放入同一目录。程序合成的“脉冲值班”和原“夜班氛围”都完整保留，均可运行时循环并以 1.15–1.8 秒动态交叉淡入淡出。
+- 44 个战斗音效：八类工具、十职业固有攻击 / 小技能 / 大招、精英词条预警与落地、Boss 登场 / 阶段 / 关闭、玩家受伤。
+- 固定 8 个普通声道与 4 个空间声道；按整次施放聚合、按音效节流，不会随弹体或敌人数无限叠加。
+- 设置界面可分别调整主音量、背景音乐、战斗与界面音效，并可即时切换 `BGM01`、`BGM02`、脉冲值班与夜班氛围。
+- 所有声音均由项目内脚本原创程序合成，不含第三方采样；完整说明与重建方式见 `docs/AUDIO_SYSTEM.md`。
 
 ## 自动验证
 
@@ -127,6 +140,11 @@ Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/event-runtime.l
 Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/event-hud.log --script res://tests/event_hud_test.gd -- --event-hud-test
 Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/visual-assets.log --script res://tests/visual_assets_test.gd -- --visual-assets-test
 Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/difficulty.log --script res://tests/difficulty_system_test.gd -- --difficulty-test
+Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/audio-system.log --script res://tests/audio_system_test.gd -- --audio-test
+Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/growth.log --script res://tests/growth_and_elite_loot_test.gd -- --growth-elite-loot-test
+Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/meta-growth.log --script res://tests/meta_growth_runtime_test.gd -- --meta-growth-test
+Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/artifact.log --script res://tests/artifact_system_test.gd -- --artifact-system-test
+Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/ally-support.log --script res://tests/ally_support_system_test.gd -- --ally-support-test
 ```
 
-八项分别验证奖励幂等与阶梯解锁、10 职业协议、10 套固有攻击 / 小技能 / 大招与 CD、主菜单与暂停流程、4 个事件 / 12 个策略、事件三选一 HUD、全部生成素材，以及四档难度的出怪/精英/Boss/2000 敌人上限。
+十三项分别验证奖励幂等与阶梯解锁、10 职业协议、10 套固有攻击 / 小技能 / 大招与 CD、全池随机三选一、无限成长、移动与 CD 安全曲线、普攻范围实机预览、精英大水晶、两槽神器与四档掉率、主菜单与暂停流程、4 个事件 / 12 个策略、事件 HUD、全部生成素材、四档难度，以及完整动态音频和固定声道限流。

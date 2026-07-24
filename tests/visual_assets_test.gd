@@ -1,6 +1,8 @@
 extends SceneTree
 
 const CareerCatalog := preload("res://scripts/career_catalog.gd")
+const ArtifactCatalog := preload("res://scripts/artifact_catalog.gd")
+const FaultCatalog := preload("res://scripts/fault_catalog.gd")
 
 
 func _initialize() -> void:
@@ -26,7 +28,13 @@ func _run() -> void:
 		_require(texture is AtlasTexture, "%s has an AI character sprite" % career_id)
 		regions.append((texture as AtlasTexture).region)
 	_require(regions.size() == 10 and regions[0] != regions[9], "ten careers map to distinct atlas cells")
-	print("VISUAL_ASSETS_TEST_PASS assets=6 careers=10")
+	for artifact_id in ArtifactCatalog.ids():
+		var artifact_icon := ArtifactCatalog.icon_texture(artifact_id)
+		_require(artifact_icon != null, "%s has a generated artifact icon" % artifact_id)
+		_require(artifact_icon.get_width() == 256 and artifact_icon.get_height() == 256, "%s artifact icon is 256x256" % artifact_id)
+	for fault_id in FaultCatalog.ids():
+		_require(FaultCatalog.sprite_texture(fault_id) is AtlasTexture, "%s museum entry maps to the fault sprite atlas" % fault_id)
+	print("VISUAL_ASSETS_TEST_PASS assets=18 careers=10 artifacts=12 museum_faults=8")
 	quit(0)
 
 

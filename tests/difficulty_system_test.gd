@@ -53,6 +53,13 @@ func _run() -> void:
 		swarm.call("spawn_enemy", SwarmWorldScript.EnemyKind.ELITE_502, run.player.global_position + Vector2(100, 0))
 		_require(is_equal_approx(float(swarm.maximum_health[0]), 420.0 * float(difficulty_config["elite_health"])), "%s scales elite health at spawn" % difficulty_id)
 		_require(is_equal_approx(float(swarm.call("_contact_damage", SwarmWorldScript.EnemyKind.ELITE_502)), 12.0 * float(difficulty_config["elite_damage"])), "%s scales elite contact damage" % difficulty_id)
+		var loot: Node = run.get_node("LootWorld")
+		var loot_before: Dictionary = loot.call("get_loot_snapshot")
+		swarm.call("damage_index", 0, 1_000_000_000.0)
+		var loot_after: Dictionary = loot.call("get_loot_snapshot")
+		_require(int(loot_after["count"]) - int(loot_before["count"]) == int(difficulty_config["elite_crystal_count"]), "%s real elite close emits the configured crystal burst" % difficulty_id)
+		_require(int(loot_after["stored_value"]) - int(loot_before["stored_value"]) == int(difficulty_config["elite_crystal_total"]), "%s real elite close grants the configured crystal XP" % difficulty_id)
+		_require(int(loot_after["elite_count"]) - int(loot_before["elite_count"]) == int(difficulty_config["elite_crystal_count"]), "%s real elite close marks every large crystal" % difficulty_id)
 
 		swarm.call("clear_all")
 		run.call("_spawn_boss")
