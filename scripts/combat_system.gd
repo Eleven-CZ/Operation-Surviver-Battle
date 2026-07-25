@@ -48,6 +48,8 @@ var rule_chain_timer := 0.2
 var lock_place_timer := 1.0
 var worker_timer := 0.55
 var rule_chain_angle := 0.0
+var rule_chain_verdict_charge := 0
+var rule_chain_pending_drops: Array[Vector2] = []
 var worker_angle := 0.0
 var wrench_flip := 1.0
 var facing_direction := Vector2.RIGHT
@@ -59,6 +61,8 @@ func configure(player_node: Node2D, swarm_node: Node2D, projection_node: Node2D)
 	player = player_node
 	swarm = swarm_node
 	projection = projection_node
+	if swarm != null and swarm.has_signal("enemy_closed_by_source") and not swarm.is_connected("enemy_closed_by_source", _on_swarm_enemy_closed_by_source):
+		swarm.connect("enemy_closed_by_source", _on_swarm_enemy_closed_by_source)
 	_emit_build()
 
 
@@ -91,6 +95,8 @@ func configure_career(career: Dictionary) -> void:
 	query_arch_level = 0
 	autoscale_arch_level = 0
 	lock_zones.clear()
+	rule_chain_verdict_charge = 0
+	rule_chain_pending_drops.clear()
 	for upgrade_id in career.get("starting_upgrades", ["bash"]):
 		if String(upgrade_id) in get_weapon_upgrade_ids() or String(upgrade_id) == "idempotency":
 			apply_upgrade(String(upgrade_id))
@@ -114,6 +120,117 @@ func get_weapon_count() -> int:
 
 func get_worker_count() -> int:
 	return _worker_count(worker_level)
+
+
+func execute_compiled_weapon(weapon_id: String, origin: Vector2, direction: Vector2, modifier: String, damage_scale: float = 0.78, source_id: String = "") -> Dictionary:
+	var level := get_upgrade_level(weapon_id)
+	if level <= 0 or player == null or swarm == null:
+		return {"executed": false, "weapon_id": weapon_id, "hits": 0}
+	var aim := direction.normalized()
+	if aim.length_squared() < 0.01:
+		aim = facing_direction
+	var forked := modifier in ["fork", "merge"]
+	var optimized := modifier in ["optimize", "merge"]
+	var area_scale := 2.15 if modifier == "merge" else (1.78 if optimized else (1.48 if forked else 1.28))
+	var payload_scale := damage_scale * (1.72 if modifier == "merge" else (1.48 if optimized else 1.18))
+	var target_center := _compiled_target_position(origin, aim, 620.0 * area_scale)
+	var hit_count := 0
+	match weapon_id:
+		"bash":
+			var target_count := _effective_bash_targets(level) + (2 if forked else 0)
+			var hit_positions: Array[Vector2] = swarm.call("damage_nearest_targets", origin, _bash_range(level) * area_scale, _effective_bash_damage(level) * payload_scale, target_count, maxf(0.55, _bash_secondary_ratio(level)), source_id)
+			hit_count = hit_positions.size()
+			for hit_position in hit_positions:
+				_add_beam(origin, hit_position, Color("9cff72"), 0.24)
+				if optimized:
+					swarm.call("damage_area", hit_position, 58.0 * area_scale, _effective_bash_damage(level) * payload_scale * 0.30, source_id)
+					_add_ring(hit_position, 58.0 * area_scale, Color("9cff72"), 0.26)
+		"ping":
+			var centers: Array[Vector2] = [target_center]
+			if forked:
+				centers.append(target_center + aim.orthogonal() * 120.0)
+				centers.append(target_center - aim.orthogonal() * 120.0)
+			var ping_radius := _ping_radius(level) * area_scale
+			for center in centers:
+				hit_count += int(swarm.call("damage_area", center, ping_radius, _ping_damage(level) * payload_scale, source_id))
+				_add_ring(center, ping_radius, Color("47c9f1"), 0.42, 5.0)
+		"firewall":
+			var firewall_centers: Array[Vector2] = [target_center]
+			if forked:
+				firewall_centers.append(target_center + aim * 145.0)
+				firewall_centers.append(target_center - aim * 145.0)
+			var firewall_radius := _firewall_radius(level) * area_scale
+			for center in firewall_centers:
+				hit_count += int(swarm.call("damage_area", center, firewall_radius, _firewall_damage(level) * payload_scale, source_id))
+				swarm.call("push_area", center, firewall_radius, 18.0)
+				_add_ring(center, firewall_radius, Color("efb23d"), 0.32, 5.0)
+		"log":
+			var log_centers: Array[Vector2] = [target_center]
+			if forked:
+				log_centers.append(target_center + aim.orthogonal() * 105.0)
+				log_centers.append(target_center - aim.orthogonal() * 105.0)
+			var log_radius := _log_radius(level) * area_scale
+			for center in log_centers:
+				hit_count += int(swarm.call("damage_area", center, log_radius, _log_damage(level) * payload_scale, source_id))
+				_add_blast(center, log_radius, Color("ba77e8"), 0.46)
+		"wrench":
+			var sweep_directions: Array[Vector2] = [aim]
+			if forked:
+				sweep_directions.append(aim.rotated(0.46))
+				sweep_directions.append(aim.rotated(-0.46))
+			var reach := _wrench_reach(level) * area_scale
+			for sweep_direction in sweep_directions:
+				hit_count += int(swarm.call("damage_arc", origin, sweep_direction, reach, _wrench_half_angle(level), _wrench_damage(level) * payload_scale))
+				_add_arc(origin, reach, sweep_direction.angle() - _wrench_half_angle(level), sweep_direction.angle() + _wrench_half_angle(level), Color("ffb454"), 0.32)
+		"rule_chain":
+			var node_count := 8 if forked else 5
+			var chain_radius := _rule_chain_radius(level) * area_scale
+			var node_radius := _rule_chain_hit_radius(level) * area_scale
+			var chain_points: Array[Vector2] = []
+			for node_index in range(node_count):
+				var node_position := target_center + Vector2.from_angle(TAU * float(node_index) / float(node_count)) * chain_radius
+				chain_points.append(node_position)
+				hit_count += int(swarm.call("damage_area", node_position, node_radius, _rule_chain_damage(level) * payload_scale * 0.65, source_id))
+				_add_ring(node_position, node_radius, Color("ee6677"), 0.28)
+			for node_index in range(chain_points.size()):
+				var chain_start := chain_points[node_index]
+				var chain_end := chain_points[(node_index + 1) % chain_points.size()]
+				var line_hits: Array[Vector2] = swarm.call("damage_line", chain_start, chain_end, node_radius * 0.72, _rule_chain_damage(level) * payload_scale, -1, source_id)
+				hit_count += line_hits.size()
+				_add_beam(chain_start, chain_end, Color("ff3d63"), 0.34)
+			hit_count += int(swarm.call("damage_ring", target_center, chain_radius, node_radius, _rule_chain_damage(level) * payload_scale * 0.82, source_id))
+			if swarm.has_method("amplify_damage_area"):
+				swarm.call("amplify_damage_area", target_center, chain_radius + node_radius, 1.24, 1.8)
+			_add_ring(target_center, chain_radius + node_radius, Color("ff3158"), 0.46, 7.0)
+		"lock_zone":
+			var lock_radius := _lock_zone_radius(level) * area_scale
+			hit_count = int(swarm.call("damage_area", target_center, lock_radius, _lock_zone_damage(level) * payload_scale * 2.4, source_id))
+			swarm.call("slow_area", target_center, lock_radius, 1.15 if optimized else 0.78)
+			_add_ring(target_center, lock_radius, Color("c68cff"), 0.52, 6.0)
+			if forked:
+				for side_sign in [-1.0, 1.0]:
+					var fork_center: Vector2 = target_center + aim.orthogonal() * float(side_sign) * lock_radius * 1.15
+					hit_count += int(swarm.call("damage_area", fork_center, lock_radius * 0.72, _lock_zone_damage(level) * payload_scale * 1.4, source_id))
+					_add_ring(fork_center, lock_radius * 0.72, Color("c68cff"), 0.38, 4.0)
+		"worker":
+			var unit_count := _worker_count(level) + (2 if forked else 0)
+			var maximum_targets := unit_count * _worker_targets_per_unit(level)
+			var worker_hits: Array[Vector2] = swarm.call("damage_nearest_targets", origin, _worker_range(level) * area_scale, _worker_damage(level) * payload_scale, maximum_targets, 1.0, source_id)
+			hit_count = worker_hits.size()
+			for hit_index in range(worker_hits.size()):
+				var worker_origin := origin + Vector2.from_angle(TAU * float(hit_index % maxi(1, unit_count)) / float(maxi(1, unit_count))) * 72.0
+				_add_beam(worker_origin, worker_hits[hit_index], Color("91ee70"), 0.24)
+				_add_ring(worker_hits[hit_index], 18.0, Color("91ee70"), 0.18)
+	return {"executed": true, "weapon_id": weapon_id, "hits": hit_count, "position": target_center, "modifier": modifier}
+
+
+func _compiled_target_position(origin: Vector2, direction: Vector2, maximum_range: float) -> Vector2:
+	var aim_point := origin + direction * minf(280.0, maximum_range * 0.55)
+	var aimed_target: Dictionary = swarm.call("get_nearest_target", aim_point, maximum_range * 0.62)
+	if bool(aimed_target.get("hit", false)):
+		return Vector2(aimed_target["position"])
+	var fallback_target: Dictionary = swarm.call("get_nearest_target", origin, maximum_range)
+	return Vector2(fallback_target["position"]) if bool(fallback_target.get("hit", false)) else aim_point
 
 
 func set_temporary_damage_multiplier(value: float) -> void:
@@ -257,23 +374,57 @@ func _fire_wrench() -> void:
 
 func _tick_rule_chain() -> void:
 	var node_positions := _rule_chain_positions()
-	var total_hits := 0
-	if node_positions.size() > RULE_CHAIN_DIRECT_NODE_LIMIT:
-		var dense_scale := minf(2.0, 1.0 + log(float(node_positions.size()) / float(RULE_CHAIN_DIRECT_NODE_LIMIT)) * 0.28)
-		total_hits = int(swarm.call("damage_ring", player.global_position, _rule_chain_radius(rule_chain_level), _rule_chain_hit_radius(rule_chain_level), _rule_chain_damage(rule_chain_level) * dense_scale))
-		if total_hits > 0:
-			for sample_index in range(RULE_CHAIN_DIRECT_NODE_LIMIT):
-				var node_index := floori(float(sample_index) * float(node_positions.size()) / float(RULE_CHAIN_DIRECT_NODE_LIMIT))
-				_add_ring(node_positions[mini(node_index, node_positions.size() - 1)], _rule_chain_hit_radius(rule_chain_level) + 4.0, Color("ee6677"), 0.14)
-			attack_fired.emit("rule_chain", player.global_position, 1.0 + float(rule_chain_level) * 0.11)
+	if node_positions.is_empty():
 		return
-	for node_position in node_positions:
-		var hits: int = swarm.call("damage_area", node_position, _rule_chain_hit_radius(rule_chain_level), _rule_chain_damage(rule_chain_level))
-		total_hits += hits
-		if hits > 0:
-			_add_ring(node_position, _rule_chain_hit_radius(rule_chain_level) + 4.0, Color("ee6677"), 0.14)
+	var total_hits := 0
+	var chain_damage := _rule_chain_damage(rule_chain_level)
+	var chain_radius := _rule_chain_radius(rule_chain_level)
+	var hit_radius := _rule_chain_hit_radius(rule_chain_level)
+	var dense_scale := minf(2.2, 1.0 + log(maxf(1.0, float(node_positions.size()) / 6.0)) * 0.30)
+	total_hits += int(swarm.call("damage_ring", player.global_position, chain_radius, hit_radius * 1.15, chain_damage * 0.88 * dense_scale, "rule_chain_perimeter"))
+	var sampled_positions: Array[Vector2] = []
+	var sampled_count := mini(RULE_CHAIN_DIRECT_NODE_LIMIT, node_positions.size())
+	for sample_index in range(sampled_count):
+		var node_index := floori(float(sample_index) * float(node_positions.size()) / float(sampled_count))
+		sampled_positions.append(node_positions[mini(node_index, node_positions.size() - 1)])
+	for node_index in range(sampled_positions.size()):
+		var node_position := sampled_positions[node_index]
+		var next_position := sampled_positions[(node_index + 1) % sampled_positions.size()]
+		var node_hits := int(swarm.call("damage_area", node_position, hit_radius, chain_damage * 0.42 * dense_scale, "rule_chain_node"))
+		var edge_hits: Array[Vector2] = swarm.call("damage_line", node_position, next_position, hit_radius * 0.70, chain_damage * 0.72 * dense_scale, -1, "rule_chain_edge")
+		total_hits += node_hits + edge_hits.size()
+		if node_hits > 0 or not edge_hits.is_empty():
+			_add_ring(node_position, hit_radius + 7.0, Color("ff3158"), 0.18, 4.0)
+			_add_beam(node_position, next_position, Color("ff3158"), 0.20)
 	if total_hits > 0:
+		if swarm.has_method("amplify_damage_area"):
+			swarm.call("amplify_damage_area", player.global_position, chain_radius + hit_radius, 1.16 + float(mini(2, zero_trust_arch_level)) * 0.05, 0.72)
 		attack_fired.emit("rule_chain", player.global_position, 1.0 + float(rule_chain_level) * 0.11)
+	_resolve_rule_chain_pending_drops()
+
+
+func _on_swarm_enemy_closed_by_source(source_id: String, world_position: Vector2, tier: int) -> void:
+	if tier != 0 or source_id not in ["rule_chain_perimeter", "rule_chain_node", "rule_chain_edge"]:
+		return
+	rule_chain_verdict_charge += 1
+	var threshold := _rule_chain_drop_threshold(rule_chain_level)
+	while rule_chain_verdict_charge >= threshold:
+		rule_chain_verdict_charge -= threshold
+		rule_chain_pending_drops.append(world_position)
+
+
+func _resolve_rule_chain_pending_drops() -> void:
+	if rule_chain_pending_drops.is_empty():
+		return
+	var drop_radius := _rule_chain_drop_radius(rule_chain_level)
+	var drop_damage := _rule_chain_damage(rule_chain_level) * _rule_chain_drop_damage_multiplier(rule_chain_level)
+	for drop_position in rule_chain_pending_drops:
+		swarm.call("damage_area", drop_position, drop_radius, drop_damage, "rule_chain_drop")
+		swarm.call("slow_area", drop_position, drop_radius, 0.55)
+		swarm.call("push_area", drop_position, drop_radius, 14.0)
+		_add_blast(drop_position, drop_radius, Color("ff244f"), 0.44)
+		_append_effect({"type": "chain_verdict", "center": drop_position, "radius": drop_radius, "color": Color("ff3158"), "ttl": 0.52, "max": 0.52})
+	rule_chain_pending_drops.clear()
 
 
 func _place_lock_zone() -> void:
@@ -469,17 +620,18 @@ func get_upgrade_card(upgrade_id: String) -> Dictionary:
 				"color": Color("ffb454"),
 			}
 		"rule_chain":
-			var chain_description := "规则节点 %d→%d · 轨道 %d→%dpx · 单节点范围 %d→%dpx · 接触伤害 %.0f→%.0f" % [
+			var chain_description := "ACL 节点 %d→%d · 封锁半径 %d→%dpx · DROP 尸爆 %d→%dpx · 每跳伤害 %.0f→%.0f" % [
 				_rule_chain_nodes(current), _rule_chain_nodes(next), int(_rule_chain_radius(current)), int(_rule_chain_radius(next)),
-				int(_rule_chain_hit_radius(current)), int(_rule_chain_hit_radius(next)),
+				int(_rule_chain_drop_radius(current)), int(_rule_chain_drop_radius(next)),
 				_rule_chain_damage(current), _rule_chain_damage(next),
 			]
 			if current == 0:
-				chain_description = "解锁实体环绕规则链 · %d 个 ACL 节点 · 轨道 %dpx · 单节点范围 %dpx · 后续每阶节点与双重范围都扩大" % [_rule_chain_nodes(next), int(_rule_chain_radius(next)), int(_rule_chain_hit_radius(next))]
-			chain_description += " · 超频继续每阶 +1 ACL 节点并扩大双重范围" if next > SHAPE_GROWTH_LIMIT else ""
+				chain_description = "解锁旋转 IPTABLES 封锁域 · 节点、连接边与外环同时判伤 · 普通怪死亡累计 DROP 阈值并在尸体原地小范围爆破"
+			chain_description += " · 命中施加易伤 · 每 %d 个普通怪死亡触发 %dpx DROP 尸爆" % [_rule_chain_drop_threshold(next), int(_rule_chain_drop_radius(next))]
+			chain_description += " · 超频继续提高吞吐并扩大封锁域" if next > SHAPE_GROWTH_LIMIT else ""
 			return {
 				"id": upgrade_id,
-				"name": "iptables 规则链  %s %d → %d" % [_stack_mode_label(next), current, next],
+				"name": "IPTABLES 规则链  %s %d → %d" % [_stack_mode_label(next), current, next],
 				"title": _stack_upgrade_title("规则链", next),
 				"description": chain_description,
 				"color": Color("ee6677"),
@@ -548,7 +700,7 @@ func get_upgrade_card(upgrade_id: String) -> Dictionary:
 				"id": upgrade_id,
 				"name": "零信任边界  %s" % ("部署" if current == 0 else "I → II"),
 				"title": "ARCHITECTURE · 零信任边界",
-				"description": "签名技能：iptables 规则链 · 每阶 +2 环绕节点 · 轨道 +12px · 单节点范围 +3px · 接触伤害 +18%",
+				"description": "签名技能：IPTABLES 规则链 · 每阶 +2 ACL 节点并扩大封锁域 · 边链与 DROP 裁决伤害 +22%",
 				"color": Color("ee6677"),
 			}
 		"arch_query":
@@ -681,12 +833,24 @@ func _draw() -> void:
 				draw_arc(player.global_position, radius, start_angle, start_angle + 0.72, 10, Color(0.94, 0.70, 0.24, 0.72), 2.0)
 	if player != null and rule_chain_level > 0:
 		var chain_positions := _rule_chain_positions()
+		var chain_phase := float(Time.get_ticks_msec()) * 0.0018
+		var chain_radius := _rule_chain_radius(rule_chain_level)
+		draw_circle(player.global_position, chain_radius, Color(0.30, 0.015, 0.055, 0.07))
+		draw_arc(player.global_position, chain_radius + _rule_chain_hit_radius(rule_chain_level) * 0.62, 0.0, TAU, 64, Color(1.0, 0.12, 0.28, 0.34), 5.0)
+		draw_arc(player.global_position, chain_radius - _rule_chain_hit_radius(rule_chain_level) * 0.62, 0.0, TAU, 64, Color(0.92, 0.20, 0.30, 0.20), 2.0)
 		for chain_index in range(chain_positions.size()):
 			var current := chain_positions[chain_index]
 			var next := chain_positions[(chain_index + 1) % chain_positions.size()]
-			draw_line(current, next, Color(0.92, 0.28, 0.38, 0.36), 2.0)
-			draw_circle(current, 9.0, Color("401c2c"))
-			draw_rect(Rect2(current - Vector2(6, 4), Vector2(12, 8)), Color("ee6677"), false, 2.0)
+			draw_line(current, next, Color(0.22, 0.01, 0.04, 0.82), 11.0)
+			draw_line(current, next, Color(1.0, 0.16, 0.30, 0.72), 4.0)
+			var packet_position := current.lerp(next, fposmod(chain_phase + float(chain_index) * 0.17, 1.0))
+			var packet_direction := (next - current).normalized()
+			var packet_side := packet_direction.orthogonal() * 5.0
+			draw_colored_polygon(PackedVector2Array([packet_position + packet_direction * 9.0, packet_position - packet_direction * 6.0 + packet_side, packet_position - packet_direction * 6.0 - packet_side]), Color("ffd0d7"))
+			draw_circle(current, 14.0, Color("40101f"))
+			draw_circle(current, 10.0, Color("ff3158"), false, 3.0)
+			draw_line(current + Vector2(-6.0, -6.0), current + Vector2(6.0, 6.0), Color("ffd7df"), 2.5)
+			draw_line(current + Vector2(-6.0, 6.0), current + Vector2(6.0, -6.0), Color("ffd7df"), 2.5)
 	if player != null and worker_level > 0:
 		for worker_position in _worker_positions():
 			draw_line(worker_position, player.global_position, Color(0.38, 0.75, 0.39, 0.20), 1.0)
@@ -721,6 +885,13 @@ func _draw() -> void:
 				draw_arc(center, radius, 0.0, TAU, 32, color, 3.0)
 				draw_line(center + Vector2(-radius, 0), center + Vector2(radius, 0), color, 2.0)
 				draw_line(center + Vector2(0, -radius), center + Vector2(0, radius), color, 2.0)
+			"chain_verdict":
+				var verdict_center := Vector2(effect["center"])
+				var verdict_radius := float(effect["radius"]) * (1.12 - alpha * 0.12)
+				draw_circle(verdict_center, verdict_radius, Color(color, color.a * 0.07))
+				draw_arc(verdict_center, verdict_radius, 0.0, TAU, 56, color, 9.0)
+				draw_line(verdict_center + Vector2(-verdict_radius * 0.55, -verdict_radius * 0.55), verdict_center + Vector2(verdict_radius * 0.55, verdict_radius * 0.55), color, 12.0)
+				draw_line(verdict_center + Vector2(-verdict_radius * 0.55, verdict_radius * 0.55), verdict_center + Vector2(verdict_radius * 0.55, -verdict_radius * 0.55), color, 12.0)
 			_:
 				draw_arc(Vector2(effect["center"]), float(effect["radius"]) * (1.1 - alpha * 0.1), 0.0, TAU, 48, color, float(effect.get("width", 3.0)))
 
@@ -955,12 +1126,12 @@ func _rule_chain_nodes(level: int) -> int:
 
 func _rule_chain_radius(level: int) -> float:
 	var shape := _shape_level(level)
-	return 0.0 if shape <= 0 else (72.0 + float(shape) * 20.0 + float(zero_trust_arch_level) * 12.0) * career_area_multiplier * _overclock_area_multiplier(level)
+	return 0.0 if shape <= 0 else (92.0 + float(shape) * 24.0 + float(zero_trust_arch_level) * 16.0) * career_area_multiplier * _overclock_area_multiplier(level)
 
 
 func _rule_chain_hit_radius(level: int) -> float:
 	var shape := _shape_level(level)
-	return 0.0 if shape <= 0 else (18.0 + float(shape) * 4.0 + float(zero_trust_arch_level) * 3.0) * career_area_multiplier * _overclock_area_multiplier(level)
+	return 0.0 if shape <= 0 else (22.0 + float(shape) * 5.0 + float(zero_trust_arch_level) * 4.0) * career_area_multiplier * _overclock_area_multiplier(level)
 
 
 func _rule_chain_damage(level: int) -> float:
@@ -968,7 +1139,32 @@ func _rule_chain_damage(level: int) -> float:
 	if shape <= 0:
 		return 0.0
 	var base_tick := (0.37 - float(shape) * 0.042) * career_cooldown_multiplier
-	return (5.5 + float(shape) * 2.4) * _authored_power_multiplier(level) * (1.0 + float(zero_trust_arch_level) * 0.18) * _global_damage_multiplier() * _overclock_damage_multiplier(level) * _execution_compression(base_tick, 0.16, level)
+	var previous_curve := (8.5 + float(shape) * 3.4) * _authored_power_multiplier(level) * (1.0 + float(zero_trust_arch_level) * 0.22) * _global_damage_multiplier() * _overclock_damage_multiplier(level) * _execution_compression(base_tick, 0.16, level)
+	return previous_curve * _rule_chain_early_damage_factor(level)
+
+
+func _rule_chain_early_damage_factor(level: int) -> float:
+	var shape := _shape_level(level)
+	if shape <= 0:
+		return 0.0
+	return lerpf(0.50, 1.0, clampf(float(shape - 1) / 4.0, 0.0, 1.0))
+
+
+func _rule_chain_drop_threshold(level: int) -> int:
+	var shape := maxi(1, _shape_level(level))
+	return maxi(5, 8 - ceili(float(shape) * 0.60))
+
+
+func _rule_chain_drop_radius(level: int) -> float:
+	var shape := _shape_level(level)
+	if shape <= 0:
+		return 0.0
+	return (36.0 + float(shape) * 8.0 + float(zero_trust_arch_level) * 5.0) * career_area_multiplier * _overclock_area_multiplier(level)
+
+
+func _rule_chain_drop_damage_multiplier(level: int) -> float:
+	var shape := _shape_level(level)
+	return 0.0 if shape <= 0 else 0.80 + float(shape) * 0.40
 
 
 func _rule_chain_tick(level: int) -> float:

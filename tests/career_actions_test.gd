@@ -51,10 +51,12 @@ func _run() -> void:
 		get_root().add_child(run)
 		var player: CharacterBody2D = run.get_node("Player")
 		var swarm: Node2D = run.get_node("SwarmWorld")
+		var combat: Node2D = run.get_node("CombatSystem")
 		var actions: Node2D = run.get_node("CareerActionSystem")
 		var hud: CanvasLayer = run.get_node("HUD")
 		actions.debug_disable_auto_signature = true
 		actions.set_physics_process(false)
+		combat.set_physics_process(false)
 		player.set_physics_process(false)
 		swarm.set_physics_process(false)
 		swarm.call("clear_all")
@@ -64,13 +66,25 @@ func _run() -> void:
 		_require(String(snapshot.get("career_id", "")) == career_id, "%s config reaches the action runtime" % career_id)
 		_require(String(snapshot.get("signature", {}).get("id", "")) == String(expected_kit["signature"]["id"]), "%s signature id matches catalog" % career_id)
 		_test_signature_geometry(actions, swarm, player, career_id)
+		if career_id == "security":
+			for _upgrade_index in range(3):
+				actions.call("apply_career_upgrade", "security_cryo_acl")
+				actions.call("apply_career_upgrade", "security_storm_ids")
+		if career_id == "opsdev":
+			for weapon_id in ["ping", "log", "wrench"]:
+				combat.call("apply_upgrade", weapon_id)
+				combat.emit_signal("attack_fired", weapon_id, player.global_position, 1.0)
+			swarm.call("clear_all")
+			for enemy_index in range(6):
+				swarm.call("spawn_enemy", SwarmWorld.EnemyKind.ELITE_502, player.global_position + Vector2(180.0 + float(enemy_index % 3) * 90.0, float(enemy_index / 3) * 150.0 - 75.0))
+				swarm.health[enemy_index] = 10_000.0
+				swarm.maximum_health[enemy_index] = 10_000.0
 
 		var skill_cooldown := float(expected_kit["skill"]["cooldown"])
 		_require(bool(actions.call("try_skill", Vector2.RIGHT)), "%s skill casts when ready" % career_id)
 		snapshot = actions.call("get_action_snapshot")
 		_require(float(snapshot["skill"]["remaining"]) > 0.0, "%s skill starts cooldown" % career_id)
 		if career_id == "network":
-			var combat: Node = run.get_node("CombatSystem")
 			actions.call("debug_advance_actions", 0.01)
 			_require(is_equal_approx(float(combat.temporary_damage_multiplier), 1.15), "packet capture grants +15% total attack in its area")
 			player.global_position += Vector2(260, 0)
@@ -82,12 +96,21 @@ func _run() -> void:
 			_require(not bool(actions.call("try_skill", Vector2.RIGHT)), "%s skill cannot be spammed" % career_id)
 		if career_id == "sre":
 			_assert_sre_skill(actions)
+		elif career_id == "security":
+			_assert_security_skill(actions, swarm)
+		elif career_id == "opsdev":
+			_assert_opsdev_skill(actions, combat, swarm, player)
 		elif career_id == "ai_infra":
 			_assert_ai_infra_skill(actions)
 		if career_id != "delivery":
 			actions.call("debug_advance_actions", skill_cooldown + 0.05)
 			_require(bool(actions.call("try_skill", Vector2.RIGHT)), "%s skill becomes ready after cooldown" % career_id)
 
+		if career_id == "opsdev":
+			swarm.call("clear_all")
+			swarm.call("spawn_enemy", SwarmWorld.EnemyKind.ELITE_502, player.global_position + Vector2(280, 0))
+			swarm.health[0] = 10_000.0
+			swarm.maximum_health[0] = 10_000.0
 		var ultimate_cooldown := float(expected_kit["ultimate"]["cooldown"])
 		_require(bool(actions.call("try_ultimate")), "%s ultimate casts when ready" % career_id)
 		snapshot = actions.call("get_action_snapshot")
@@ -95,6 +118,10 @@ func _run() -> void:
 		_require(not bool(actions.call("try_ultimate")), "%s ultimate cannot be spammed" % career_id)
 		if career_id == "sre":
 			_assert_sre_ultimate(actions, player)
+		elif career_id == "security":
+			_assert_security_ultimate(actions)
+		elif career_id == "opsdev":
+			_assert_opsdev_ultimate(actions, combat, player)
 		elif career_id == "delivery":
 			_assert_delivery_ultimate(actions)
 		elif career_id == "ai_infra":
@@ -109,6 +136,13 @@ func _run() -> void:
 		_require(Vector2(ui["skill_position"]).y >= 600.0 and Vector2(ui["ultimate_position"]).y >= 600.0, "%s action slots sit on the lower HUD" % career_id)
 		if career_id == "delivery":
 			_require(String(ui.get("skill_cooldown", "")).contains("/"), "delivery HUD displays available and maximum Q charges")
+		elif career_id == "opsdev":
+			_require(bool(ui.get("opsdev_toolchain_visible", false)), "ops development exposes the expandable toolchain HUD")
+			_require(bool(ui.get("opsdev_overlay_active", false)), "ops development removes the baked five-slot blue frame overlay")
+			var pipeline_names: Array = ui.get("opsdev_toolchain_names", [])
+			_require(pipeline_names.size() == 7 and not String(pipeline_names[0]).contains("EMPTY") and not String(pipeline_names[6]).contains("LOCKED"), "toolchain HUD expands to seven named weapon snippets")
+		else:
+			_require(not bool(ui.get("opsdev_overlay_active", false)), "%s keeps the standard five-slot HUD overlay" % career_id)
 		get_root().remove_child(run)
 		run.free()
 
@@ -135,9 +169,35 @@ func _test_signature_geometry(actions: Node2D, swarm: Node2D, player: CharacterB
 			var trace: Dictionary = actions.call("debug_cast_signature")
 			_require(int(trace.get("hits", 0)) >= 1 and float(swarm.health[0]) < health_before, "network probe damages at long range")
 		"security":
+			_require(is_equal_approx(float(actions.call("_security_signature_damage_factor", 0)), 0.50) and is_equal_approx(float(actions.call("_security_signature_damage_factor", 5)), 1.0), "security wall attack starts at half payload and recovers its prior ceiling by stack five")
+			var previous_stack_five_scale := 1.0 + 1.45 * 5.0 / 11.0
+			_require(is_equal_approx(float(actions.call("_signature_area_multiplier_for_level", 0)), 0.45), "security wall geometry starts at forty-five percent of its former baseline")
+			_require(is_equal_approx(float(actions.call("_signature_area_multiplier_for_level", 5)), previous_stack_five_scale), "security area stack five recovers the previous full geometry ceiling")
 			var before := int(actions.call("get_action_snapshot")["walls"])
 			actions.call("debug_cast_signature")
 			_require(int(actions.call("get_action_snapshot")["walls"]) == before + 1, "security signature creates a persistent wall")
+			var wall: Dictionary = actions.get("walls")[actions.get("walls").size() - 1]
+			var wall_start := Vector2(wall["start"])
+			var wall_end := Vector2(wall["end"])
+			_require(wall_start.distance_to(wall_end) < 150.0 and float(wall.get("width", 999.0)) < 18.0, "security's initial checkpoint is short and narrow")
+			var wall_midpoint := wall_start.lerp(wall_end, 0.5)
+			var protected_direction := (player.global_position - wall_midpoint).normalized()
+			swarm.call("spawn_enemy", SwarmWorld.EnemyKind.HTTP_404, wall_midpoint + protected_direction * 6.0)
+			swarm.health[0] = 1000.0
+			swarm.maximum_health[0] = 1000.0
+			var health_before := float(swarm.health[0])
+			actions.call("debug_advance_actions", 0.05)
+			var largest_initial_flame_radius := 0.0
+			for visual in actions.get("visuals"):
+				if String(visual.get("type", "")) == "security_flame":
+					largest_initial_flame_radius = maxf(largest_initial_flame_radius, float(visual.get("radius", 0.0)))
+			_require(largest_initial_flame_radius > 0.0 and largest_initial_flame_radius < 26.0, "security's initial attached burn circles use the compact real hit radius")
+			var wall_direction := (wall_end - wall_start).normalized()
+			var wall_normal := wall_direction.orthogonal()
+			var protected_side := signf((player.global_position - wall_start).dot(wall_normal))
+			var enemy_side := signf((Vector2(swarm.positions[0]) - wall_start).dot(wall_normal))
+			_require(enemy_side != protected_side, "security wall physically blocks ordinary faults from crossing toward the player")
+			_require(float(swarm.health[0]) < health_before, "security wall burns blocked faults on contact")
 		"sre":
 			swarm.call("spawn_enemy", SwarmWorld.EnemyKind.ENOSPC, player.global_position + Vector2(110, 30))
 			swarm.call("spawn_enemy", SwarmWorld.EnemyKind.ENOSPC, player.global_position + Vector2(220, -40))
@@ -188,6 +248,95 @@ func _assert_sre_skill(actions: Node2D) -> void:
 	for zone in actions.get("zones"):
 		_require(String(zone.get("kind", "")) != "heal", "SRE traffic shift does not fall back to a healing circle")
 	_assert_sre_has_no_circle_visuals(actions)
+
+
+func _assert_security_skill(actions: Node2D, swarm: Node2D) -> void:
+	_require(is_equal_approx(float(actions.call("_security_action_damage_factor")), 1.0), "maxed security augments restore Q and R to their previous damage ceiling")
+	var walls: Array = actions.get("walls")
+	var corridor_count := 0
+	var corridor_midpoint := Vector2.ZERO
+	for wall in walls:
+		if String(wall.get("kind", "")) == "corridor":
+			corridor_count += 1
+			corridor_midpoint = Vector2(wall["start"]).lerp(Vector2(wall["end"]), 0.5)
+			_require(int(wall.get("frost_level", 0)) == 3 and int(wall.get("storm_level", 0)) == 3, "security Q inherits maxed cryo ACL and storm IDS augments")
+	_require(corridor_count >= 3, "security Q creates two burning lanes and a blocking gate")
+	var lightning_target_index := int(swarm.get("count"))
+	swarm.call("spawn_enemy", SwarmWorld.EnemyKind.ELITE_502, corridor_midpoint)
+	swarm.health[lightning_target_index] = 1000.0
+	swarm.maximum_health[lightning_target_index] = 1000.0
+	actions.call("debug_advance_actions", 0.15)
+	var has_flame := false
+	var has_frost := false
+	var has_lightning := false
+	for visual in actions.get("visuals"):
+		match String(visual.get("type", "")):
+			"security_flame": has_flame = true
+			"security_frost": has_frost = true
+			"security_lightning": has_lightning = true
+	_require(has_flame and has_frost, "security Q renders burning and freezing wall feedback")
+	_require(has_lightning or int(swarm.get("count")) == 0, "storm IDS emits lightning when targets are available")
+
+
+func _assert_opsdev_skill(actions: Node2D, combat: Node2D, swarm: Node2D, player: CharacterBody2D) -> void:
+	var snapshot: Dictionary = actions.call("get_action_snapshot")
+	var toolchain: Array = snapshot.get("opsdev_toolchain", [])
+	_require(toolchain.size() == 3, "ops development records the last three distinct weapons")
+	_require(String(toolchain[0].get("id", "")) == "ping" and String(toolchain[1].get("id", "")) == "log" and String(toolchain[2].get("id", "")) == "wrench", "toolchain preserves recent distinct weapon order")
+	_require(String(toolchain[0].get("modifier", "")) == "FORK" and String(toolchain[1].get("modifier", "")) == "LOOP" and String(toolchain[2].get("modifier", "")) == "OPT", "Q assigns fork, loop and optimize compiler passes")
+	_require(_count_pending_type(actions, "opsdev_compiled_stage") == 3, "Q schedules all three compiled weapon stages")
+	var health_before := 0.0
+	for enemy_index in range(int(swarm.get("count"))):
+		health_before += float(swarm.health[enemy_index])
+	actions.call("debug_advance_actions", 0.58)
+	var health_after := 0.0
+	for enemy_index in range(int(swarm.get("count"))):
+		health_after += float(swarm.health[enemy_index])
+	_require(health_after < health_before, "compiled weapon stages use the real combat geometry and damage the swarm")
+	_require(not Array(combat.get("effects")).is_empty(), "compiled weapon stages reuse CombatSystem weapon visuals")
+	var compiler_modifiers: Array[String] = ["fork", "loop_echo", "optimize"]
+	var weapon_ids: Array = combat.call("get_weapon_upgrade_ids")
+	for weapon_index in range(weapon_ids.size()):
+		var weapon_id := String(weapon_ids[weapon_index])
+		if int(combat.call("get_upgrade_level", weapon_id)) <= 0:
+			combat.call("apply_upgrade", weapon_id)
+		var compiled_result: Dictionary = combat.call("execute_compiled_weapon", weapon_id, player.global_position, Vector2.RIGHT, compiler_modifiers[weapon_index % compiler_modifiers.size()], 0.5, "opsdev_test")
+		_require(bool(compiled_result.get("executed", false)), "compiler supports %s weapon geometry" % weapon_id)
+	for _capacity_level in range(4):
+		actions.call("apply_career_upgrade", "opsdev_pipeline_capacity")
+	for weapon_id in ["bash", "firewall", "rule_chain", "worker"]:
+		combat.emit_signal("attack_fired", weapon_id, player.global_position, 1.0)
+	snapshot = actions.call("get_action_snapshot")
+	toolchain = snapshot.get("opsdev_toolchain", [])
+	_require(int(snapshot.get("opsdev_toolchain_capacity", 0)) == 7, "toolchain lottery upgrades expand capacity from three to seven")
+	_require(toolchain.size() == 7 and String(toolchain[6].get("modifier", "")) == "JIT", "seven-slot toolchain retains seven distinct weapons and unlocks the JIT pass")
+
+
+func _assert_opsdev_ultimate(actions: Node2D, combat: Node2D, player: CharacterBody2D) -> void:
+	var snapshot: Dictionary = actions.call("get_action_snapshot")
+	_require(String(snapshot.get("active", "")) == "opsdev_hot_reload", "ops development ultimate enters runtime hot reload mode")
+	_require(_count_pending_type(actions, "opsdev_combo_tool") == 7 and _count_pending_type(actions, "opsdev_combo_commit") == 1, "hot reload opens by revealing and linking every tool before the combo commit")
+	actions.call("debug_advance_actions", 0.50)
+	var before_first_hook := _count_pending_type(actions, "opsdev_compiled_stage")
+	combat.emit_signal("attack_fired", "ping", player.global_position, 1.0)
+	var after_first_hook := _count_pending_type(actions, "opsdev_compiled_stage")
+	combat.emit_signal("attack_fired", "ping", player.global_position, 1.0)
+	var after_duplicate_hook := _count_pending_type(actions, "opsdev_compiled_stage")
+	_require(after_first_hook == before_first_hook + 1, "hot reload intercepts the first weapon trigger in an epoch")
+	_require(after_duplicate_hook == after_first_hook, "hot reload caps each weapon to one rewrite per epoch")
+	actions.call("debug_advance_actions", 1.12)
+	_require(int(actions.call("get_action_snapshot").get("opsdev_hot_reload_epoch", 0)) >= 1, "hot reload opens a fresh interception epoch")
+	_require(_count_pending_type(actions, "opsdev_compiled_stage") >= 7, "every hot-reload epoch proactively executes the full seven-slot toolchain")
+
+
+func _assert_security_ultimate(actions: Node2D) -> void:
+	var snapshot: Dictionary = actions.call("get_action_snapshot")
+	_require(String(snapshot.get("active", "")) == "security_lockdown", "security ultimate enters the global lockdown mode")
+	var lockdown_walls := 0
+	for wall in actions.get("walls"):
+		if String(wall.get("kind", "")) == "lockdown":
+			lockdown_walls += 1
+	_require(lockdown_walls == 6, "global lockdown builds a complete six-wall hard perimeter")
 
 
 func _assert_sre_ultimate(actions: Node2D, player: CharacterBody2D) -> void:

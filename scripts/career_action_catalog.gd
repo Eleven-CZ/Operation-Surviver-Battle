@@ -24,9 +24,9 @@ static func all() -> Array[Dictionary]:
 		},
 		{
 			"career_id": "security",
-			"signature": {"id": "zero_trust_wall", "name": "零信任防火墙", "archetype": "persistent_wall", "description": "面向威胁部署持续墙，灼烧、减速并推回越界故障。", "cooldown": 2.35, "icon": "firewall"},
-			"skill": {"id": "isolation_corridor", "name": "隔离通道", "description": "沿移动方向生成双侧临时墙，并获得短时隔离护盾。", "cooldown": 11.0, "icon": "rule_chain"},
-			"ultimate": {"id": "global_block", "name": "全域封禁", "description": "生成六边形封禁区，持续扫描并抑制区域内全部故障。", "cooldown": 52.0, "icon": "firewall"},
+			"signature": {"id": "zero_trust_wall", "name": "零信任防火墙", "archetype": "persistent_wall", "description": "部署长效高温实体墙；初始是小型检查点，范围卡会同步扩大墙长、阻断宽度与灼烧圈。", "cooldown": 1.85, "icon": "firewall"},
+			"skill": {"id": "isolation_corridor", "name": "烈焰隔离通道", "description": "突进点燃双侧墙与前置闸门，宽域灼烧、击退并阻挡普通故障。", "cooldown": 9.5, "icon": "rule_chain"},
+			"ultimate": {"id": "global_block", "name": "全域封禁", "description": "建立九秒六边形硬封锁区；边界持续灼烧，内部高频扫描、冻结并击退全部故障。", "cooldown": 50.0, "icon": "firewall"},
 		},
 		{
 			"career_id": "it_ops",
@@ -43,8 +43,8 @@ static func all() -> Array[Dictionary]:
 		{
 			"career_id": "opsdev",
 			"signature": {"id": "idempotent_script", "name": "幂等脚本", "archetype": "delayed_repeat", "description": "命中后在原位置自动重复执行两次。", "cooldown": 0.96, "icon": "bash"},
-			"skill": {"id": "ci_runner", "name": "CI Runner", "description": "立即刷新脚本，并让 Runner 复刻最近三次执行。", "cooldown": 10.0, "icon": "bash"},
-			"ultimate": {"id": "iac_apply", "name": "全量 IaC Apply", "description": "按 PLAN、APPLY、VERIFY 三阶段轰击全场并刷新工具。", "cooldown": 51.0, "icon": "bash"},
+			"skill": {"id": "compile_run", "name": "Compile & Run", "description": "宽域编译当前 3–7 槽工具链，应用七级编译通道并高速重放全部真实武器几何。", "cooldown": 8.5, "icon": "bash"},
+			"ultimate": {"id": "runtime_hot_reload", "name": "Runtime Hot Reload", "description": "十秒 KERNEL 热重载：工具逐件上屏并串联真实武器效果，每个 Epoch 自动执行整链，结束提交 650px MERGE COMBO。", "cooldown": 48.0, "icon": "bash"},
 		},
 		{
 			"career_id": "sre",

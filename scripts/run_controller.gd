@@ -8,6 +8,7 @@ const UI_FONT := preload("res://assets/fonts/NotoSansSC-VF.ttf")
 const RUN_DURATION := 360.0
 const MAX_GAMEPLAY_ENEMIES := 600
 const REGULAR_COMBAT_SLOT_CAP := 4
+const OPSDEV_COMBAT_SLOT_CAP := 7
 const ARCHITECTURE_LEVELS: Array[int] = [3, 7]
 const INFINITE_GROWTH_CAP := 2_147_483_647
 const ARTIFACT_SLOT_CAP := 2
@@ -118,6 +119,8 @@ var current_upgrade_is_architecture := false
 var current_upgrade_choices: Array[Dictionary] = []
 var reroll_charges := 2
 var upgrade_modal_open := false
+var artifact_reel_pause_active := false
+var artifact_reel_was_paused := false
 var enemies_closed := 0
 var elites_closed := 0
 var settlement_committed := false
@@ -207,6 +210,8 @@ func _ready() -> void:
 		hud.connect("career_skill_requested", _on_career_skill_requested)
 	if hud.has_signal("career_ultimate_requested"):
 		hud.connect("career_ultimate_requested", _on_career_ultimate_requested)
+	if hud.has_signal("artifact_reel_finished"):
+		hud.connect("artifact_reel_finished", _on_artifact_reel_finished)
 
 	current_xp_required = _xp_required_for(level)
 	if smoke_test_mode:
@@ -791,7 +796,7 @@ func _build_upgrade_choices() -> Array[Dictionary]:
 	for id in upgrade_ids:
 		if _get_upgrade_level(id) >= _get_upgrade_cap(id):
 			continue
-		if _is_combat_weapon(id) and _get_upgrade_level(id) == 0 and _regular_combat_slot_count() >= REGULAR_COMBAT_SLOT_CAP:
+		if _is_combat_weapon(id) and _get_upgrade_level(id) == 0 and _combat_weapon_slot_count() >= _combat_weapon_slot_cap():
 			continue
 		pool.append(_decorate_upgrade_card(_get_upgrade_card(id)))
 	if combat.call("can_evolve"):
@@ -804,6 +809,9 @@ func _build_architecture_choices() -> Array[Dictionary]:
 	var pool: Array[Dictionary] = []
 	for id in ids:
 		if _get_upgrade_level(id) >= 2:
+			continue
+		var signature_id := _architecture_signature(id)
+		if career_id == "opsdev" and not signature_id.is_empty() and _get_upgrade_level(signature_id) == 0 and _combat_weapon_slot_count() >= _combat_weapon_slot_cap():
 			continue
 		pool.append(_decorate_architecture_card(_get_upgrade_card(id)))
 	return _sample_random_cards(pool, 3)
@@ -1203,6 +1211,7 @@ func get_artifact_runtime_snapshot() -> Dictionary:
 		"cooldowns": artifact_cooldowns.duplicate(),
 		"once_used": artifact_once_used.duplicate(),
 		"rerolls": reroll_charges,
+		"reel_paused": artifact_reel_pause_active,
 	}
 
 
@@ -1238,10 +1247,24 @@ func _try_drop_artifact(world_position: Vector2, roll_override: float = -1.0, se
 		return ""
 	ground_artifact_ids.append(artifact_id)
 	if hud.has_method("show_artifact_reel"):
+		if not artifact_reel_pause_active:
+			artifact_reel_was_paused = get_tree().paused
+			artifact_reel_pause_active = true
+		get_tree().paused = true
 		hud.call("show_artifact_reel", definition, candidates)
 	else:
 		hud.show_stack_feedback("精英掉落 · %s" % String(definition.get("name", artifact_id)), "靠近拾取；每局最多安装 2 件神器", _artifact_color(artifact_id))
 	return artifact_id
+
+
+func _on_artifact_reel_finished() -> void:
+	if not artifact_reel_pause_active:
+		return
+	artifact_reel_pause_active = false
+	var keep_paused := artifact_reel_was_paused or ended or upgrade_modal_open
+	artifact_reel_was_paused = false
+	if not keep_paused:
+		get_tree().paused = false
 
 
 func _on_artifact_collected(artifact_id: String) -> void:
@@ -1764,6 +1787,9 @@ func _upgrade_meta(upgrade_id: String) -> Dictionary:
 		"delivery_sync_reserve": return {"route": "实施交付", "archetype": "Q / 独立充能", "icon": "Q+", "synergy": "增加跨组联调储备次数；每层冷却独立推进"}
 		"delivery_sync_parallel": return {"route": "实施交付", "archetype": "Q / 并行支援", "icon": "xN", "synergy": "一次联调召集更多职业剪影，加快联合验收"}
 		"delivery_release_burn_down": return {"route": "实施交付", "archetype": "Q→R / 击杀联动", "icon": "R-", "synergy": "Q 击杀缓慢燃尽大招冷却；每次施放有独立削减上限"}
+		"opsdev_pipeline_capacity": return {"route": "运维开发", "archetype": "Q/R / 工具链容量", "icon": "PIPE", "synergy": "每层解锁一个 Runtime Toolchain 槽位，最高从 3 槽扩至 7 槽"}
+		"security_cryo_acl": return {"route": "安全运维", "archetype": "墙体 / 冰冻控制", "icon": "ICE", "synergy": "所有职业墙附加冷冻 ACL，延长减速并短暂冻结普通故障"}
+		"security_storm_ids": return {"route": "安全运维", "archetype": "墙体 / 链式雷击", "icon": "IDS", "synergy": "墙体扫描时释放链式闪电，层数提高目标数、距离与伤害"}
 		"signature_rate": return {"route": "当前职业", "archetype": "固有普攻 / 频率", "icon": "CD", "synergy": "缩短自动攻击间隔；高频层同时转化为超频效率"}
 		"signature_quantity": return {"route": "当前职业", "archetype": "固有普攻 / 数量", "icon": "xN", "synergy": "增加职业专属实体或命中数；超出实体预算转为协同伤害"}
 		"signature_damage": return {"route": "当前职业", "archetype": "固有普攻 / 攻击", "icon": "DMG", "synergy": "只强化职业固有自动攻击，不改变小技能与大招"}
@@ -1773,7 +1799,7 @@ func _upgrade_meta(upgrade_id: String) -> Dictionary:
 		"firewall": return {"route": "安全运维", "archetype": "领域 / 击退", "icon": "WAF", "synergy": "靠近敌群收益最高，容量规划提高容错"}
 		"log": return {"route": "SRE / NOC", "archetype": "间接 / 爆破", "icon": "LOG", "synergy": "随机覆盖密集故障，适合根因清场"}
 		"wrench": return {"route": "IT 运维", "archetype": "近战 / 横扫", "icon": "TOOL", "synergy": "必须贴身走位；现场值守协议强化连击"}
-		"rule_chain": return {"route": "安全运维", "archetype": "环绕 / 碰撞", "icon": "ACL", "synergy": "每阶同时增加节点、轨道与单节点碰撞范围；零信任边界进一步扩容"}
+		"rule_chain": return {"route": "安全运维", "archetype": "封锁域 / DROP 裁决", "icon": "ACL", "synergy": "节点、连接边与外环同时判伤；普通怪死亡达到阈值后在尸体原地触发小范围 DROP 爆破"}
 		"lock_zone": return {"route": "DBA", "archetype": "陷阱 / 控场", "icon": "SQL", "synergy": "边移动边布点，把敌群引入慢查询锁域"}
 		"worker": return {"route": "AI Infra", "archetype": "召唤 / 自主", "icon": "POD", "synergy": "Worker 独立编队齐射；弹性集群增加副本"}
 		"idempotency": return {"route": "运维开发", "archetype": "策略 / 进化", "icon": "IDEM", "synergy": "Bash STACK 3 + 幂等性可触发 IaC"}
@@ -1782,7 +1808,7 @@ func _upgrade_meta(upgrade_id: String) -> Dictionary:
 		"capacity": return {"route": "容量管理", "archetype": "生存 / 续航", "icon": "CAP", "synergy": "适合扳手、防火墙等贴身流派"}
 		"redundancy": return {"route": "SRE", "archetype": "容灾 / 复活", "icon": "HA", "synergy": "为高风险近身和陷阱走位提供兜底"}
 		"arch_oncall": return {"route": "IT 运维", "archetype": "构筑核心 / 近战", "icon": "P1", "synergy": "签名技能：机柜扳手；推荐防火墙 + 容量规划"}
-		"arch_zero_trust": return {"route": "安全运维", "archetype": "构筑核心 / 环绕", "icon": "403", "synergy": "签名技能：iptables 规则链；推荐 Ping + 冗余"}
+		"arch_zero_trust": return {"route": "安全运维", "archetype": "构筑核心 / 封锁域", "icon": "403", "synergy": "签名技能：IPTABLES 规则链；强化 ACL 边链、易伤与 DROP 裁决"}
 		"arch_query": return {"route": "DBA", "archetype": "构筑核心 / 阵地", "icon": "TX", "synergy": "签名技能：慢查询锁域；推荐日志 + 防火墙"}
 		"arch_autoscale": return {"route": "AI Infra", "archetype": "构筑核心 / 召唤", "icon": "K8S", "synergy": "签名技能：Worker Pod；推荐 Bash + IaC"}
 	return {"route": "通用运维", "archetype": "通用", "icon": "OPS", "synergy": "补强当前构筑"}
@@ -1810,8 +1836,23 @@ func _regular_combat_slot_count() -> int:
 	return total
 
 
+func _combat_weapon_slot_count() -> int:
+	if career_id != "opsdev":
+		return _regular_combat_slot_count()
+	var total := 0
+	for id in combat.call("get_weapon_upgrade_ids"):
+		if _get_upgrade_level(String(id)) > 0:
+			total += 1
+	return total
+
+
+func _combat_weapon_slot_cap() -> int:
+	return OPSDEV_COMBAT_SLOT_CAP if career_id == "opsdev" else REGULAR_COMBAT_SLOT_CAP
+
+
 func _upgrade_build_context() -> String:
-	return "%s\n常规技能槽 %d / %d" % [combat_build_summary, _regular_combat_slot_count(), REGULAR_COMBAT_SLOT_CAP]
+	var slot_label := "工具武器槽" if career_id == "opsdev" else "常规技能槽"
+	return "%s\n%s %d / %d" % [combat_build_summary, slot_label, _combat_weapon_slot_count(), _combat_weapon_slot_cap()]
 
 
 func _architecture_signature(upgrade_id: String) -> String:
@@ -1907,6 +1948,14 @@ func _refresh_build_summary() -> void:
 		if reserve_level > 0: methods.append("联调储备 ×%d" % reserve_level)
 		if parallel_level > 0: methods.append("并行会签 ×%d" % parallel_level)
 		if burn_level > 0: methods.append("发布燃尽 ×%d" % burn_level)
+	elif career_id == "opsdev":
+		var pipeline_level := int(career_actions.call("get_career_upgrade_level", "opsdev_pipeline_capacity"))
+		methods.append("工具链容量 %d/7" % (3 + pipeline_level))
+	elif career_id == "security":
+		var cryo_level := int(career_actions.call("get_career_upgrade_level", "security_cryo_acl"))
+		var storm_level := int(career_actions.call("get_career_upgrade_level", "security_storm_ids"))
+		if cryo_level > 0: methods.append("冷冻 ACL ×%d" % cryo_level)
+		if storm_level > 0: methods.append("雷暴 IDS ×%d" % storm_level)
 	var action_snapshot: Dictionary = career_actions.call("get_action_snapshot")
 	var signature_name := String(action_snapshot.get("signature", {}).get("name", "职业固有攻击"))
 	var growth: Dictionary = action_snapshot.get("signature", {}).get("growth", {})
@@ -1932,6 +1981,7 @@ func _refresh_build_summary() -> void:
 
 func _skill_loadout_for_hud() -> Array[Dictionary]:
 	var loadout: Array[Dictionary] = []
+	var loadout_limit := 1 + _combat_weapon_slot_cap() if career_id == "opsdev" else 5
 	var action_snapshot: Dictionary = career_actions.call("get_action_snapshot")
 	var signature: Dictionary = action_snapshot.get("signature", {})
 	if not signature.is_empty():
@@ -1943,13 +1993,13 @@ func _skill_loadout_for_hud() -> Array[Dictionary]:
 			continue
 		var card: Dictionary = combat.call("get_upgrade_card", String(upgrade_id))
 		loadout.append({"id": String(upgrade_id), "level": level_value, "name": String(card.get("title", card.get("name", upgrade_id)))})
-		if loadout.size() >= 5:
+		if loadout.size() >= loadout_limit:
 			return loadout
 	for method in [
 		{"id": "runbook", "level": runbook_level, "name": "Runbook"},
 		{"id": "redundancy", "level": redundancy_level, "name": "冗余设计"},
 	]:
-		if int(method["level"]) > 0 and loadout.size() < 5:
+		if int(method["level"]) > 0 and loadout.size() < loadout_limit:
 			loadout.append(method)
 	return loadout
 

@@ -6,6 +6,7 @@ const DifficultyCatalog := preload("res://scripts/difficulty_catalog.gd")
 const CoworkerCatalog := preload("res://scripts/coworker_catalog.gd")
 const ArtifactCatalog := preload("res://scripts/artifact_catalog.gd")
 const HUD_OVERLAY_TEXTURE := preload("res://assets/generated/combat_hud_overlay.png")
+const HUD_OVERLAY_OPSDEV_TEXTURE := preload("res://assets/generated/combat_hud_overlay_opsdev.png")
 const SKILL_ICON_TEXTURE := preload("res://assets/generated/skill_icons_5x2.png")
 const COWORKER_SPRITE_TEXTURE := preload("res://assets/generated/coworker_sprites_4x2.png")
 const MiniRadarScript := preload("res://scripts/mini_radar.gd")
@@ -22,6 +23,7 @@ signal pause_requested
 signal resume_requested
 signal career_skill_requested
 signal career_ultimate_requested
+signal artifact_reel_finished
 
 var root_control: Control
 var hud_art: TextureRect
@@ -78,6 +80,8 @@ var feedback_left := 0.0
 var feedback_duration := 2.2
 var feedback_audio: AudioStreamPlayer
 var modal_mode := ""
+var skill_slots: Array[Control] = []
+var skill_slot_backs: Array[ColorRect] = []
 var skill_slot_icons: Array[TextureRect] = []
 var skill_slot_levels: Array[Label] = []
 var radar: Control
@@ -104,6 +108,12 @@ var career_ultimate_cover: ColorRect
 var career_ultimate_cooldown: Label
 var career_ultimate_name: Label
 var career_ultimate_button: Button
+var opsdev_toolchain_panel: Control
+var opsdev_toolchain_frames: Array[PanelContainer] = []
+var opsdev_toolchain_icons: Array[TextureRect] = []
+var opsdev_toolchain_names: Array[Label] = []
+var opsdev_toolchain_modifiers: Array[Label] = []
+var opsdev_toolchain_revisions: Array[Label] = []
 var career_action_accent := Color("56e6dc")
 var last_skill_action_id := ""
 var last_ultimate_action_id := ""
@@ -275,6 +285,7 @@ func _build_hud() -> void:
 
 	_build_skill_tray()
 	_build_career_action_slots()
+	_build_opsdev_toolchain()
 
 	var hint := _make_label("WASD 移动 · Q/Space 小技能 · R 大招 · E 对齐 · Esc 暂停", 11, Color("b6d7e3") if high_contrast else Color("7095a8"))
 	root_control.add_child(hint)
@@ -434,18 +445,20 @@ func _process(delta: float) -> void:
 
 func _build_skill_tray() -> void:
 	var start := Vector2(476, 635)
-	for slot_index in range(5):
+	for slot_index in range(8):
 		var slot := Control.new()
 		root_control.add_child(slot)
 		slot.position = start + Vector2(slot_index * 70.0, 0)
 		slot.size = Vector2(58, 58)
 		slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		skill_slots.append(slot)
 		var slot_back := ColorRect.new()
 		slot.add_child(slot_back)
 		slot_back.position = Vector2(4, 4)
 		slot_back.size = Vector2(50, 50)
 		slot_back.color = Color(0.006, 0.025, 0.040, 0.88)
 		slot_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		skill_slot_backs.append(slot_back)
 		var icon := TextureRect.new()
 		slot.add_child(icon)
 		icon.position = Vector2(4, 4)
@@ -464,6 +477,30 @@ func _build_skill_tray() -> void:
 		level_label.add_theme_constant_override("shadow_offset_x", 1)
 		level_label.add_theme_constant_override("shadow_offset_y", 1)
 		skill_slot_levels.append(level_label)
+	_configure_skill_tray_layout(false)
+
+
+func _configure_skill_tray_layout(expanded: bool) -> void:
+	var visible_count := 8 if expanded else 5
+	var start := Vector2(471, 642) if expanded else Vector2(476, 635)
+	var spacing := 44.0 if expanded else 70.0
+	var slot_size := Vector2(42, 42) if expanded else Vector2(58, 58)
+	var icon_offset := Vector2(3, 3) if expanded else Vector2(4, 4)
+	var icon_size := Vector2(36, 36) if expanded else Vector2(50, 50)
+	for slot_index in range(skill_slots.size()):
+		var slot := skill_slots[slot_index]
+		slot.visible = slot_index < visible_count
+		slot.position = start + Vector2(float(slot_index) * spacing, 0.0)
+		slot.size = slot_size
+		var slot_back := skill_slot_backs[slot_index]
+		slot_back.position = icon_offset
+		slot_back.size = icon_size
+		var icon := skill_slot_icons[slot_index]
+		icon.position = icon_offset
+		icon.size = icon_size
+		var level_label := skill_slot_levels[slot_index]
+		level_label.position = Vector2(21, 24) if expanded else Vector2(31, 34)
+		level_label.size = Vector2(19, 16) if expanded else Vector2(23, 18)
 
 
 func _build_artifact_slots() -> void:
@@ -551,6 +588,62 @@ func _build_career_action_slots() -> void:
 	career_ultimate_name = ultimate_parts["name"]
 	career_ultimate_button = ultimate_parts["button"]
 	career_ultimate_button.pressed.connect(func() -> void: career_ultimate_requested.emit())
+
+
+func _build_opsdev_toolchain() -> void:
+	opsdev_toolchain_panel = Control.new()
+	root_control.add_child(opsdev_toolchain_panel)
+	opsdev_toolchain_panel.position = Vector2(471, 558)
+	opsdev_toolchain_panel.size = Vector2(340, 48)
+	opsdev_toolchain_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var title := _make_label("RUNTIME TOOLCHAIN", 10, Color("9cff72"))
+	opsdev_toolchain_panel.add_child(title)
+	title.position = Vector2(0, -18)
+	title.size = Vector2(340, 17)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_constant_override("outline_size", 4)
+	title.add_theme_color_override("font_outline_color", Color("041019"))
+	var stage_labels: Array[String] = ["FORK", "LOOP", "OPT", "FAN", "CACHE", "VEC", "JIT"]
+	for slot_index in range(7):
+		var frame := PanelContainer.new()
+		opsdev_toolchain_panel.add_child(frame)
+		frame.position = Vector2(float(slot_index) * 48.0 + 2.0, 0.0)
+		frame.size = Vector2(44, 44)
+		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		frame.add_theme_stylebox_override("panel", _panel_style(Color(0.006, 0.025, 0.04, 0.92), Color("425d68")))
+		var content := Control.new()
+		frame.add_child(content)
+		content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var icon := TextureRect.new()
+		content.add_child(icon)
+		icon.position = Vector2(10, 12)
+		icon.size = Vector2(24, 24)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		icon.modulate = Color(0.38, 0.50, 0.56, 0.25)
+		var modifier := _make_label(stage_labels[slot_index], 7, Color("7899a5"))
+		content.add_child(modifier)
+		modifier.position = Vector2(2, -1)
+		modifier.size = Vector2(40, 13)
+		modifier.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var revision := _make_label("", 8, Color("d9ffb7"))
+		content.add_child(revision)
+		revision.position = Vector2(25, 9)
+		revision.size = Vector2(16, 12)
+		revision.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		var name := _make_label("EMPTY", 7, Color("607986"))
+		content.add_child(name)
+		name.position = Vector2(1, 32)
+		name.size = Vector2(42, 11)
+		name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		opsdev_toolchain_frames.append(frame)
+		opsdev_toolchain_icons.append(icon)
+		opsdev_toolchain_names.append(name)
+		opsdev_toolchain_modifiers.append(modifier)
+		opsdev_toolchain_revisions.append(revision)
+	opsdev_toolchain_panel.hide()
 
 
 func _make_career_action_slot(position_value: Vector2, slot_size: Vector2, border: Color, key_text: String) -> Dictionary:
@@ -786,6 +879,7 @@ func update_career_actions(snapshot: Dictionary) -> void:
 		career_ultimate_icon.texture = CareerCatalog.emblem_texture(String(snapshot.get("career_id", "ops")))
 	career_skill_name.text = String(skill.get("name", "职业小技能"))
 	career_ultimate_name.text = String(ultimate.get("name", "职业大招"))
+	_update_opsdev_toolchain(snapshot.get("opsdev_toolchain", []), int(snapshot.get("opsdev_toolchain_capacity", 3)))
 	# Cooldown growth and artifacts can change the effective values without
 	# changing the action id, so refresh both tooltips every frame.
 	career_skill_button.tooltip_text = "%s\n%s\n当前冷却 %.1f 秒" % [skill.get("name", "职业小技能"), skill.get("description", ""), float(skill.get("cooldown", 0.0))]
@@ -799,6 +893,51 @@ func update_career_actions(snapshot: Dictionary) -> void:
 	else:
 		_update_action_cooldown(career_skill_slot, career_skill_cover, career_skill_cooldown, career_skill_button, float(skill.get("remaining", 0.0)), float(skill.get("cooldown", 1.0)), career_action_accent)
 	_update_action_cooldown(career_ultimate_slot, career_ultimate_cover, career_ultimate_cooldown, career_ultimate_button, float(ultimate.get("remaining", 0.0)), float(ultimate.get("cooldown", 1.0)), Color("ffd36a"))
+
+
+func _update_opsdev_toolchain(toolchain_value: Variant, capacity: int = 3) -> void:
+	if opsdev_toolchain_panel == null:
+		return
+	var toolchain: Array = toolchain_value if toolchain_value is Array else []
+	var stage_labels: Array[String] = ["FORK", "LOOP", "OPT", "FAN", "CACHE", "VEC", "JIT"]
+	for slot_index in range(opsdev_toolchain_frames.size()):
+		var frame := opsdev_toolchain_frames[slot_index]
+		var icon := opsdev_toolchain_icons[slot_index]
+		var name := opsdev_toolchain_names[slot_index]
+		var modifier := opsdev_toolchain_modifiers[slot_index]
+		var revision := opsdev_toolchain_revisions[slot_index]
+		if slot_index >= capacity:
+			frame.add_theme_stylebox_override("panel", _panel_style(Color(0.004, 0.012, 0.018, 0.82), Color("26343a")))
+			icon.texture = null
+			icon.modulate = Color(0.22, 0.28, 0.31, 0.20)
+			name.text = "LOCKED"
+			name.add_theme_color_override("font_color", Color("42545c"))
+			modifier.text = "LOCK"
+			modifier.add_theme_color_override("font_color", Color("42545c"))
+			revision.text = ""
+			continue
+		if slot_index >= toolchain.size():
+			frame.add_theme_stylebox_override("panel", _panel_style(Color(0.006, 0.025, 0.04, 0.88), Color("425d68")))
+			icon.texture = null
+			icon.modulate = Color(0.38, 0.50, 0.56, 0.25)
+			name.text = "EMPTY"
+			name.add_theme_color_override("font_color", Color("607986"))
+			modifier.text = stage_labels[slot_index]
+			modifier.add_theme_color_override("font_color", Color("7899a5"))
+			revision.text = ""
+			continue
+		var snippet: Dictionary = toolchain[slot_index]
+		var snippet_id := String(snippet.get("id", ""))
+		var snippet_color := Color(snippet.get("color", Color("9cff72")))
+		frame.add_theme_stylebox_override("panel", _panel_style(Color(0.006, 0.025, 0.04, 0.94), snippet_color))
+		icon.texture = _skill_icon("bash" if snippet_id == "idempotent_script" else snippet_id)
+		icon.modulate = Color.WHITE
+		name.text = String(snippet.get("name", snippet_id)).to_upper()
+		name.add_theme_color_override("font_color", snippet_color.lightened(0.12))
+		modifier.text = String(snippet.get("modifier", stage_labels[slot_index]))
+		modifier.add_theme_color_override("font_color", snippet_color)
+		var revision_value := int(snippet.get("revision", 1))
+		revision.text = "r%d" % revision_value if revision_value > 1 else ""
 
 
 func _update_action_cooldown(slot: Control, cover: ColorRect, label: Label, button: Button, remaining: float, maximum: float, ready_color: Color) -> void:
@@ -831,6 +970,9 @@ func get_action_ui_snapshot() -> Dictionary:
 		"ultimate_name": career_ultimate_name.text if career_ultimate_name != null else "",
 		"skill_cooldown": career_skill_cooldown.text if career_skill_cooldown != null else "",
 		"ultimate_cooldown": career_ultimate_cooldown.text if career_ultimate_cooldown != null else "",
+		"opsdev_toolchain_visible": opsdev_toolchain_panel != null and opsdev_toolchain_panel.visible,
+		"opsdev_overlay_active": hud_art != null and hud_art.texture == HUD_OVERLAY_OPSDEV_TEXTURE,
+		"opsdev_toolchain_names": opsdev_toolchain_names.map(func(label: Label) -> String: return label.text),
 		"skill_position": career_skill_slot.position if career_skill_slot != null else Vector2.ZERO,
 		"ultimate_position": career_ultimate_slot.position if career_ultimate_slot != null else Vector2.ZERO,
 	}
@@ -911,11 +1053,17 @@ func get_ally_ui_snapshot() -> Dictionary:
 
 
 func configure_career(career: Dictionary) -> void:
-	career_icon.texture = CareerCatalog.emblem_texture(String(career.get("id", "ops")))
+	var career_id := String(career.get("id", "ops"))
+	if hud_art != null:
+		hud_art.texture = HUD_OVERLAY_OPSDEV_TEXTURE if career_id == "opsdev" else HUD_OVERLAY_TEXTURE
+	career_icon.texture = CareerCatalog.emblem_texture(career_id)
 	career_icon.modulate = Color(0.96, 0.98, 1.0, 0.92)
 	career_action_accent = Color(String(career.get("color", "56e6dc")))
 	last_skill_action_id = ""
 	last_ultimate_action_id = ""
+	_configure_skill_tray_layout(career_id == "opsdev")
+	if opsdev_toolchain_panel != null:
+		opsdev_toolchain_panel.visible = career_id == "opsdev"
 	if career_skill_slot != null:
 		for child in career_skill_slot.get_children():
 			if child is PanelContainer and child.has_meta("action_frame"):
@@ -1006,6 +1154,8 @@ func _update_artifact_reel(delta: float) -> void:
 	if not artifact_reel_queue.is_empty():
 		var next_package: Dictionary = artifact_reel_queue.pop_front()
 		_start_artifact_reel(next_package)
+		return
+	artifact_reel_finished.emit()
 
 
 func _update_artifact_reel_icons() -> void:

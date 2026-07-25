@@ -54,6 +54,7 @@ var timers := PackedFloat32Array()
 var contact_timers := PackedFloat32Array()
 var states := PackedFloat32Array()
 var slow_timers := PackedFloat32Array()
+var root_timers := PackedFloat32Array()
 var vulnerability_timers := PackedFloat32Array()
 var vulnerability_multipliers := PackedFloat32Array()
 var entity_ids := PackedInt64Array()
@@ -98,6 +99,7 @@ func _ready() -> void:
 	contact_timers.resize(MAX_ENTITIES)
 	states.resize(MAX_ENTITIES)
 	slow_timers.resize(MAX_ENTITIES)
+	root_timers.resize(MAX_ENTITIES)
 	vulnerability_timers.resize(MAX_ENTITIES)
 	vulnerability_multipliers.resize(MAX_ENTITIES)
 	entity_ids.resize(MAX_ENTITIES)
@@ -165,6 +167,7 @@ func spawn_enemy(kind: int, world_position: Vector2, forced_affix_mask: int = -1
 	contact_timers[count] = 0.0
 	states[count] = 0.0
 	slow_timers[count] = 0.0
+	root_timers[count] = 0.0
 	vulnerability_timers[count] = 0.0
 	vulnerability_multipliers[count] = 1.0
 	entity_ids[count] = next_entity_id
@@ -514,6 +517,7 @@ func _physics_process(delta: float) -> void:
 		contact_timers[index] = maxf(0.0, contact_timers[index] - delta)
 		states[index] = maxf(0.0, states[index] - delta)
 		slow_timers[index] = maxf(0.0, slow_timers[index] - delta)
+		root_timers[index] = maxf(0.0, root_timers[index] - delta)
 		vulnerability_timers[index] = maxf(0.0, vulnerability_timers[index] - delta)
 		if vulnerability_timers[index] <= 0.0:
 			vulnerability_multipliers[index] = 1.0
@@ -579,6 +583,8 @@ func _physics_process(delta: float) -> void:
 
 		if slow_timers[index] > 0.0:
 			speed_scale *= 0.48
+		if root_timers[index] > 0.0:
+			speed_scale = 0.0
 
 		positions[index] += move_direction * speeds[index] * speed_scale * delta
 		positions[index].x = clampf(positions[index].x, WORLD_RECT.position.x, WORLD_RECT.end.x)
@@ -771,6 +777,48 @@ func slow_area(center: Vector2, area_radius: float, duration: float) -> int:
 	return slowed
 
 
+func root_area(center: Vector2, area_radius: float, duration: float) -> int:
+	var rooted := 0
+	var radius_squared := area_radius * area_radius
+	for index in range(count):
+		if positions[index].distance_squared_to(center) > radius_squared:
+			continue
+		var has_unstoppable := EliteAffixCatalog.has(affix_masks[index], EliteAffixCatalog.Affix.UNSTOPPABLE)
+		var resistance := 0.05 if has_unstoppable else (0.10 if _tier(kinds[index]) == 2 else (0.28 if _tier(kinds[index]) == 1 else 1.0))
+		root_timers[index] = maxf(root_timers[index], duration * resistance)
+		states[index] = maxf(states[index], minf(0.36, duration * resistance))
+		rooted += 1
+	return rooted
+
+
+func block_line(start: Vector2, end: Vector2, half_width: float, protected_position: Vector2) -> int:
+	var segment := end - start
+	var segment_length_squared := maxf(0.001, segment.length_squared())
+	var line_normal := segment.normalized().orthogonal()
+	var protected_side := signf((protected_position - start).dot(line_normal))
+	if is_zero_approx(protected_side):
+		protected_side = 1.0
+	var blocked := 0
+	for index in range(count):
+		if _tier(kinds[index]) > 0:
+			continue
+		var offset := positions[index] - start
+		var along := clampf(offset.dot(segment) / segment_length_squared, 0.0, 1.0)
+		var closest := start + segment * along
+		var clearance := half_width + radii[index] * 0.72
+		if positions[index].distance_squared_to(closest) > clearance * clearance:
+			continue
+		var enemy_side := signf((positions[index] - start).dot(line_normal))
+		var blocked_side := -protected_side
+		if not is_zero_approx(enemy_side) and enemy_side != protected_side:
+			blocked_side = enemy_side
+		positions[index] = closest + line_normal * blocked_side * clearance
+		slow_timers[index] = maxf(slow_timers[index], 0.18)
+		states[index] = maxf(states[index], 0.12)
+		blocked += 1
+	return blocked
+
+
 func amplify_damage_area(center: Vector2, area_radius: float, multiplier: float, duration: float) -> int:
 	var amplified := 0
 	var radius_squared := area_radius * area_radius
@@ -951,6 +999,7 @@ func _remove_at(index: int) -> void:
 	contact_timers[index] = contact_timers[count]
 	states[index] = states[count]
 	slow_timers[index] = slow_timers[count]
+	root_timers[index] = root_timers[count]
 	vulnerability_timers[index] = vulnerability_timers[count]
 	vulnerability_multipliers[index] = vulnerability_multipliers[count]
 	entity_ids[index] = entity_ids[count]

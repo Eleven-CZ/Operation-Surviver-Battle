@@ -161,10 +161,30 @@ func _test_authored_upgrade_impact(combat: Node, actions: Node, swarm: Node, pla
 	for enemy_index in range(int(swarm.count)):
 		dense_health_before += float(swarm.health[enemy_index])
 	combat.call("_tick_rule_chain")
+	combat.call("_tick_rule_chain")
 	var dense_health_after := 0.0
 	for enemy_index in range(int(swarm.count)):
 		dense_health_after += float(swarm.health[enemy_index])
-	_require(dense_health_after < dense_health_before, "high-stack iptables merges dense nodes into one bounded ring collision pass")
+	_require(dense_health_after < dense_health_before, "high-stack iptables damages through its perimeter, nodes, and connecting ACL edges")
+	_require(float(swarm.vulnerability_multipliers[0]) > 1.0, "iptables perimeter applies vulnerability to intercepted faults")
+	_require(is_equal_approx(float(combat.call("_rule_chain_early_damage_factor", 1)), 0.50) and is_equal_approx(float(combat.call("_rule_chain_early_damage_factor", 5)), 1.0), "iptables starts at half payload and returns to its previous authored ceiling at stack five")
+	swarm.call("clear_all")
+	combat.effects.clear()
+	var drop_threshold := int(combat.call("_rule_chain_drop_threshold", 13))
+	for enemy_index in range(drop_threshold):
+		var death_position := player.global_position + Vector2.from_angle(TAU * float(enemy_index) / float(drop_threshold)) * dense_orbit
+		swarm.call("spawn_enemy", SwarmWorldScript.EnemyKind.HTTP_404, death_position)
+		swarm.health[enemy_index] = 1.0
+		swarm.maximum_health[enemy_index] = 1.0
+	combat.call("_tick_rule_chain")
+	var drop_effect: Dictionary = {}
+	for effect in combat.effects:
+		if String(effect.get("type", "")) == "chain_verdict":
+			drop_effect = effect
+			break
+	_require(not drop_effect.is_empty(), "iptables ordinary-fault deaths trigger a visible DROP corpse explosion")
+	_require(Vector2(drop_effect.get("center", player.global_position)).distance_to(player.global_position) > dense_orbit * 0.70, "DROP explosion originates at the threshold-crossing corpse instead of the player")
+	_require(float(drop_effect.get("radius", 9999.0)) < dense_orbit * 0.55, "DROP corpse explosion stays local instead of covering the whole ruleset orbit")
 
 	# Upgrade feedback includes the real post-selection coverage rather than a
 	# fixed decorative ring that would look identical at every level.
@@ -183,7 +203,11 @@ func _test_authored_upgrade_impact(combat: Node, actions: Node, swarm: Node, pla
 		var base_cooldown := float(actions.call("_signature_cooldown_for_level", 0))
 		_require(float(actions.call("_signature_cooldown_for_level", 1)) <= base_cooldown * 0.89, "%s first signature-rate card is an obvious frequency spike" % String(career["id"]))
 		_require(float(actions.call("_signature_damage_multiplier_for_level", 1)) >= 1.25, "%s first signature-damage card adds at least 25%%" % String(career["id"]))
-		_require(float(actions.call("_signature_area_multiplier_for_level", 1)) >= 1.20, "%s first signature-area card is visibly larger" % String(career["id"]))
+		var first_area_scale := float(actions.call("_signature_area_multiplier_for_level", 1))
+		if String(career["id"]) == "security":
+			_require(first_area_scale >= 0.67 and first_area_scale < 1.0, "security's first area card visibly grows the compact checkpoint without restoring full coverage")
+		else:
+			_require(first_area_scale >= 1.20, "%s first signature-area card is visibly larger" % String(career["id"]))
 		actions.visuals.clear()
 		actions.call("apply_signature_upgrade", "signature_area")
 		_require(not actions.visuals.is_empty(), "%s signature selection emits immediate battlefield feedback" % String(career["id"]))

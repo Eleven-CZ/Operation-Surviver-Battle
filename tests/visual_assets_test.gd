@@ -16,6 +16,7 @@ func _run() -> void:
 		"res://assets/generated/fault_sprites_4x2.png",
 		"res://assets/generated/coworker_sprites_4x2.png",
 		"res://assets/generated/combat_hud_overlay.png",
+		"res://assets/generated/combat_hud_overlay_opsdev.png",
 		"res://assets/generated/skill_icons_5x2.png",
 	]
 	for path in asset_paths:

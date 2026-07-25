@@ -5,6 +5,7 @@ const ActionCatalog := preload("res://scripts/career_action_catalog.gd")
 
 const RANDOM_SEED_SAMPLES := 256
 const REGULAR_COMBAT_SLOT_CAP := 4
+const OPSDEV_COMBAT_SLOT_CAP := 7
 const SIGNATURE_GROWTH_IDS: Array[String] = ["signature_rate", "signature_quantity", "signature_damage", "signature_area"]
 const META_GROWTH_IDS: Array[String] = ["movement_speed", "career_skill_rate", "career_ultimate_rate"]
 
@@ -53,6 +54,7 @@ func _run() -> void:
 		_require(not String(run.get_node("HUD").career_protocol_label.text).is_empty(), "%s exposes its protocol in the HUD" % career_id)
 		_test_career_protocol(run, combat, actions, career_id)
 		_require(int(run.career_protocol_completions) >= 1, "%s records protocol execution for settlement" % career_id)
+		_assert_combat_slot_policy(run, combat, career_id)
 		get_root().remove_child(run)
 		run.free()
 	if failure_count > 0:
@@ -117,12 +119,44 @@ func _eligible_upgrade_ids(run: Node, combat: Node, actions: Node) -> Array[Stri
 	for candidate in candidates:
 		if int(run.call("_get_upgrade_level", candidate)) >= int(run.call("_get_upgrade_cap", candidate)):
 			continue
-		if bool(run.call("_is_combat_weapon", candidate)) and int(run.call("_get_upgrade_level", candidate)) == 0 and int(run.call("_regular_combat_slot_count")) >= REGULAR_COMBAT_SLOT_CAP:
+		if bool(run.call("_is_combat_weapon", candidate)) and int(run.call("_get_upgrade_level", candidate)) == 0 and int(run.call("_combat_weapon_slot_count")) >= int(run.call("_combat_weapon_slot_cap")):
 			continue
 		eligible.append(candidate)
 	if bool(combat.call("can_evolve")):
 		eligible.append("iac")
 	return eligible
+
+
+func _assert_combat_slot_policy(run: Node, combat: Node, career_id: String) -> void:
+	var expected_cap := OPSDEV_COMBAT_SLOT_CAP if career_id == "opsdev" else REGULAR_COMBAT_SLOT_CAP
+	_require(int(run.call("_combat_weapon_slot_cap")) == expected_cap, "%s exposes the intended combat weapon cap" % career_id)
+	var weapon_ids: Array = combat.call("get_weapon_upgrade_ids")
+	for weapon_id_value in weapon_ids:
+		if int(run.call("_combat_weapon_slot_count")) >= expected_cap:
+			break
+		var weapon_id := String(weapon_id_value)
+		if int(combat.call("get_upgrade_level", weapon_id)) <= 0:
+			if career_id == "opsdev" and int(run.call("_combat_weapon_slot_count")) >= REGULAR_COMBAT_SLOT_CAP:
+				_require(weapon_id in _eligible_upgrade_ids(run, combat, run.get_node("CareerActionSystem")), "ops development can still roll weapon %s beyond the normal four-slot boundary" % weapon_id)
+			combat.call("apply_upgrade", weapon_id)
+	_require(int(run.call("_combat_weapon_slot_count")) == expected_cap, "%s can fill exactly %d weapon slots" % [career_id, expected_cap])
+	var eligible_after_cap := _eligible_upgrade_ids(run, combat, run.get_node("CareerActionSystem"))
+	for weapon_id_value in weapon_ids:
+		var weapon_id := String(weapon_id_value)
+		if int(combat.call("get_upgrade_level", weapon_id)) <= 0:
+			_require(weapon_id not in eligible_after_cap, "%s cannot roll an eighth/new weapon after reaching its cap" % career_id)
+	if career_id == "opsdev":
+		var architecture_choices: Array[Dictionary] = run.call("_build_architecture_choices")
+		for choice in architecture_choices:
+			var signature_id := String(run.call("_architecture_signature", String(choice.get("id", ""))))
+			_require(signature_id.is_empty() or int(combat.call("get_upgrade_level", signature_id)) > 0, "ops development architecture choices cannot inject an eighth weapon")
+		var loadout: Array = run.call("_skill_loadout_for_hud")
+		_require(loadout.size() == 8, "ops development HUD exposes its signature plus seven carried weapons")
+		var visible_slots := 0
+		for slot in run.get_node("HUD").get("skill_slots"):
+			if slot.visible:
+				visible_slots += 1
+		_require(visible_slots == 8, "ops development expands the bottom weapon tray to eight visible entries")
 
 
 func _assert_random_architecture_pool(run: Node, combat: Node, career_id: String) -> void:

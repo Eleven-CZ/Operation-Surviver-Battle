@@ -22,6 +22,7 @@ func _build() -> void:
 	run.set_process(false)
 	var player: CharacterBody2D = run.get_node("Player")
 	var swarm: Node2D = run.get_node("SwarmWorld")
+	var combat: Node2D = run.get_node("CombatSystem")
 	var actions: Node2D = run.get_node("CareerActionSystem")
 	player.set_physics_process(false)
 	swarm.set_physics_process(false)
@@ -36,15 +37,27 @@ func _build() -> void:
 	player.global_position = Vector2(1200, 675)
 	if career_id == "delivery":
 		_build_delivery(player, swarm, actions)
+	elif career_id == "security":
+		_build_security(player, swarm, combat, actions)
+	elif career_id == "opsdev":
+		_build_opsdev(player, swarm, combat, actions)
 	elif career_id == "ai_infra":
 		_build_ai_infra(player, swarm, actions)
 	else:
 		_build_sre(player, swarm, actions)
 	var hud: CanvasLayer = run.get_node("HUD")
+	run.set("pending_upgrades", 0)
+	run.set("upgrade_modal_open", false)
+	paused = false
+	hud.call("hide_modal")
 	hud.call("update_career_actions", actions.call("get_action_snapshot"))
 	var headline := "SRE · 关键路径 Trace / 流量切换 / 全站多活"
 	if career_id == "delivery":
 		headline = "实施交付 · 全员到场 / 三轮借招 / 联合验收"
+	elif career_id == "security":
+		headline = "安全运维 · 实体阻断墙 / CRYO ACL / STORM IDS / 全域封禁"
+	elif career_id == "opsdev":
+		headline = "运维开发 · 7-SLOT KERNEL TOOLCHAIN / LINKED TOOL EFFECTS / MERGE COMBO"
 	elif career_id == "ai_infra":
 		headline = "AI Infra · Tensor Pipeline / Pipeline Flush / 基础模型上线"
 	hud.call("set_event_message", headline, Color(String(run.career.get("color", "65e890"))))
@@ -77,6 +90,39 @@ func _build_delivery(player: CharacterBody2D, swarm: Node2D, actions: Node2D) ->
 		actions.call("debug_advance_actions", 0.10)
 
 
+func _build_opsdev(player: CharacterBody2D, swarm: Node2D, combat: Node2D, actions: Node2D) -> void:
+	_spawn_faults(swarm, player.global_position, 48, 155.0, 585.0)
+	swarm.call("spawn_enemy", SwarmWorld.EnemyKind.ELITE_502, player.global_position + Vector2(350, -160), 3)
+	swarm.call("spawn_enemy", SwarmWorld.EnemyKind.ELITE_OOM, player.global_position + Vector2(-320, 185), 5)
+	_fortify_swarm(swarm)
+	for _capacity_level in range(4):
+		actions.call("apply_career_upgrade", "opsdev_pipeline_capacity")
+	for weapon_id in ["bash", "ping", "firewall", "log", "wrench", "rule_chain", "worker"]:
+		combat.call("apply_upgrade", weapon_id)
+		combat.emit_signal("attack_fired", weapon_id, player.global_position, 1.0)
+	actions.call("try_ultimate")
+	combat.emit_signal("attack_fired", "ping", player.global_position, 1.0)
+	combat.emit_signal("attack_fired", "wrench", player.global_position, 1.0)
+	for _step in range(13):
+		actions.call("debug_advance_actions", 0.10)
+
+
+func _build_security(player: CharacterBody2D, swarm: Node2D, combat: Node2D, actions: Node2D) -> void:
+	_spawn_faults(swarm, player.global_position, 56, 120.0, 540.0)
+	_fortify_swarm(swarm)
+	for _rule_level in range(4):
+		combat.call("apply_upgrade", "rule_chain")
+	combat.call("_tick_rule_chain")
+	for _upgrade_level in range(3):
+		actions.call("apply_career_upgrade", "security_cryo_acl")
+		actions.call("apply_career_upgrade", "security_storm_ids")
+	actions.call("debug_cast_signature")
+	actions.call("try_skill", Vector2.RIGHT)
+	actions.call("try_ultimate")
+	for _step in range(3):
+		actions.call("debug_advance_actions", 0.10)
+
+
 func _build_ai_infra(player: CharacterBody2D, swarm: Node2D, actions: Node2D) -> void:
 	_spawn_faults(swarm, player.global_position, 54, 145.0, 610.0)
 	actions.call("try_skill", Vector2.RIGHT)
@@ -98,6 +144,12 @@ func _spawn_faults(swarm: Node2D, center: Vector2, count: int, minimum_radius: f
 		var radius := lerpf(minimum_radius, maximum_radius, float(index % 7) / 6.0)
 		var position_value := center + Vector2.from_angle(angle) * radius
 		swarm.call("spawn_enemy", int(kinds[index % kinds.size()]), position_value)
+
+
+func _fortify_swarm(swarm: Node2D) -> void:
+	for enemy_index in range(int(swarm.get("count"))):
+		swarm.health[enemy_index] = 100_000.0
+		swarm.maximum_health[enemy_index] = 100_000.0
 
 
 func _process(_delta: float) -> bool:

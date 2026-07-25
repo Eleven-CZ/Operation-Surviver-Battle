@@ -7,17 +7,24 @@ signal career_metric(metric_id: String, amount: float)
 
 const ActionCatalog := preload("res://scripts/career_action_catalog.gd")
 const CAREER_SPRITES := preload("res://assets/generated/career_sprites_5x2.png")
+const UI_FONT := preload("res://assets/fonts/NotoSansSC-VF.ttf")
 const MAX_VISUALS := 140
-const MAX_WALLS := 16
+const MAX_WALLS := 24
 const MAX_ZONES := 18
 const MAX_NODES := 16
 const MAX_PENDING_ACTIONS := 72
+const OPSDEV_TOOLCHAIN_BASE_CAP := 3
+const OPSDEV_TOOLCHAIN_MAX_CAP := 7
+const OPSDEV_HOT_RELOAD_DURATION := 10.0
+const OPSDEV_HOT_RELOAD_EPOCH := 0.78
 const AI_WORLD_RECT := Rect2(20.0, 180.0, 2360.0, 1140.0)
 const AI_PIPELINE_STAGE_DAMAGE: Array[float] = [6.0, 10.0, 14.0, 22.0]
 const AI_PIPELINE_STAGE_COLORS: Array[Color] = [Color("70caff"), Color("91ee70"), Color("d5ff74"), Color("ffffff")]
 const AI_MODEL_DURATION := 8.40
 const SIGNATURE_UPGRADE_IDS: Array[String] = ["signature_rate", "signature_quantity", "signature_damage", "signature_area"]
 const DELIVERY_UPGRADE_IDS: Array[String] = ["delivery_sync_reserve", "delivery_sync_parallel", "delivery_release_burn_down"]
+const OPSDEV_UPGRADE_IDS: Array[String] = ["opsdev_pipeline_capacity"]
+const SECURITY_UPGRADE_IDS: Array[String] = ["security_cryo_acl", "security_storm_ids"]
 const DELIVERY_Q_KILL_REDUCTION: Array[float] = [0.0, 0.12, 0.18, 0.24, 0.30, 0.36]
 const DELIVERY_Q_CAST_REDUCTION_CAP: Array[float] = [0.0, 1.20, 1.80, 2.40, 3.00, 3.60]
 const CAREER_ORDER: Array[String] = ["ops", "dba", "network", "security", "it_ops", "helpdesk", "opsdev", "sre", "delivery", "ai_infra"]
@@ -34,6 +41,29 @@ const CAREER_COLORS := {
 	"delivery": Color("ffce73"),
 	"ai_infra": Color("91ee70"),
 }
+const OPSDEV_TOOL_NAMES := {
+	"idempotent_script": "SCRIPT",
+	"bash": "BASH",
+	"ping": "PING",
+	"firewall": "FW",
+	"log": "LOG",
+	"wrench": "WRENCH",
+	"rule_chain": "CHAIN",
+	"lock_zone": "LOCK",
+	"worker": "POD",
+}
+const OPSDEV_TOOL_COLORS := {
+	"idempotent_script": Color("9cff72"),
+	"bash": Color("56e6dc"),
+	"ping": Color("47c9f1"),
+	"firewall": Color("efb23d"),
+	"log": Color("ba77e8"),
+	"wrench": Color("ffb454"),
+	"rule_chain": Color("ee6677"),
+	"lock_zone": Color("c68cff"),
+	"worker": Color("91ee70"),
+}
+const OPSDEV_STAGE_MODIFIERS: Array[String] = ["FORK", "LOOP", "OPT", "FANOUT", "CACHE", "VECTOR", "JIT"]
 
 var player: CharacterBody2D
 var swarm: Node2D
@@ -76,8 +106,15 @@ var delivery_sync_parallel_level := 0
 var delivery_release_burn_down_level := 0
 var delivery_skill_charge_timers: Array[float] = []
 var delivery_q_cast_serial := 0
+var opsdev_pipeline_capacity_level := 0
+var security_cryo_acl_level := 0
+var security_storm_ids_level := 0
 var sre_replicas: Array[Dictionary] = []
 var sre_failover_used := false
+var opsdev_toolchain: Array[Dictionary] = []
+var opsdev_hot_reload_seen: Dictionary = {}
+var opsdev_hot_reload_epoch := 0
+var opsdev_compile_serial := 0
 var ai_model_decode_count := 0
 var ai_model_eos_fired := false
 
@@ -95,6 +132,8 @@ func configure(player_node: CharacterBody2D, swarm_node: Node2D, projection_node
 	swarm = swarm_node
 	projection = projection_node
 	combat = combat_node
+	if combat != null and combat.has_signal("attack_fired") and not combat.is_connected("attack_fired", _on_combat_attack_fired):
+		combat.connect("attack_fired", _on_combat_attack_fired)
 
 
 func configure_career(career_data: Dictionary) -> void:
@@ -134,8 +173,15 @@ func configure_career(career_data: Dictionary) -> void:
 	delivery_release_burn_down_level = 0
 	delivery_skill_charge_timers.clear()
 	delivery_q_cast_serial = 0
+	opsdev_pipeline_capacity_level = 0
+	security_cryo_acl_level = 0
+	security_storm_ids_level = 0
 	sre_replicas.clear()
 	sre_failover_used = false
+	opsdev_toolchain.clear()
+	opsdev_hot_reload_seen.clear()
+	opsdev_hot_reload_epoch = 0
+	opsdev_compile_serial = 0
 	ai_model_decode_count = 0
 	ai_model_eos_fired = false
 	if player != null and player.has_method("set_temporary_damage_reduction"):
@@ -305,7 +351,7 @@ func try_skill(direction: Vector2 = Vector2.ZERO) -> bool:
 		"security": _skill_security(resolved_direction)
 		"it_ops": _skill_it_ops()
 		"helpdesk": _skill_helpdesk()
-		"opsdev": _skill_opsdev()
+		"opsdev": _skill_opsdev(resolved_direction)
 		"sre": _skill_sre(resolved_direction)
 		"delivery": _skill_delivery(resolved_direction)
 		"ai_infra": _skill_ai_infra(resolved_direction)
@@ -351,6 +397,11 @@ func get_action_snapshot() -> Dictionary:
 		var next_support_id := DELIVERY_SUPPORT_ORDER[delivery_support_index % DELIVERY_SUPPORT_ORDER.size()]
 		skill["name"] = "跨组联调 %d/%d · %s" % [_delivery_skill_charges(), _delivery_skill_max_charges(), _career_short_name(next_support_id)]
 		skill["description"] = "每次召集 %d 位同事投放固有普攻；独立储备 %d 层；每三次支援完成一次联合验收。" % [_delivery_skill_silhouette_count(), _delivery_skill_max_charges()]
+	elif career_id == "opsdev":
+		var pipeline_label := _opsdev_pipeline_label()
+		skill["name"] = "编译运行 %d/%d" % [opsdev_toolchain.size(), _opsdev_toolchain_cap()]
+		skill["description"] = "当前工具链：%s。宽域编译全部槽位，按七级编译通道高速重放。" % pipeline_label
+		ultimate["description"] = "10 秒进入 KERNEL HOT RELOAD；工具逐件上屏、连线并释放真实效果，每个 Epoch 自动执行整链，结束提交 650px MERGE COMBO。当前工具链：%s。" % pipeline_label
 	skill["base_cooldown"] = float(kit["skill"].get("cooldown", 2.0))
 	skill["cooldown"] = _skill_cooldown()
 	skill["cooldown_level"] = skill_rate_level
@@ -381,6 +432,9 @@ func get_action_snapshot() -> Dictionary:
 		"nodes": nodes.size(),
 		"pending": pending_actions.size(),
 		"worker_count": _worker_count(),
+		"opsdev_toolchain": _opsdev_toolchain_snapshot(),
+		"opsdev_toolchain_capacity": _opsdev_toolchain_cap(),
+		"opsdev_hot_reload_epoch": opsdev_hot_reload_epoch,
 		"ai_token_count": _ai_token_count(),
 		"ai_model_eos_fired": ai_model_eos_fired,
 		"delivery_next_support": DELIVERY_SUPPORT_ORDER[delivery_support_index % DELIVERY_SUPPORT_ORDER.size()] if career_id == "delivery" else "",
@@ -394,11 +448,15 @@ func get_signature_upgrade_ids() -> Array[String]:
 
 
 func get_career_upgrade_ids() -> Array[String]:
-	return DELIVERY_UPGRADE_IDS.duplicate() if career_id == "delivery" else []
+	match career_id:
+		"delivery": return DELIVERY_UPGRADE_IDS.duplicate()
+		"opsdev": return OPSDEV_UPGRADE_IDS.duplicate()
+		"security": return SECURITY_UPGRADE_IDS.duplicate()
+	return []
 
 
 func is_career_upgrade(upgrade_id: String) -> bool:
-	return career_id == "delivery" and upgrade_id in DELIVERY_UPGRADE_IDS
+	return (career_id == "delivery" and upgrade_id in DELIVERY_UPGRADE_IDS) or (career_id == "opsdev" and upgrade_id in OPSDEV_UPGRADE_IDS) or (career_id == "security" and upgrade_id in SECURITY_UPGRADE_IDS)
 
 
 func get_career_upgrade_level(upgrade_id: String) -> int:
@@ -406,6 +464,9 @@ func get_career_upgrade_level(upgrade_id: String) -> int:
 		"delivery_sync_reserve": return delivery_sync_reserve_level
 		"delivery_sync_parallel": return delivery_sync_parallel_level
 		"delivery_release_burn_down": return delivery_release_burn_down_level
+		"opsdev_pipeline_capacity": return opsdev_pipeline_capacity_level
+		"security_cryo_acl": return security_cryo_acl_level
+		"security_storm_ids": return security_storm_ids_level
 	return 0
 
 
@@ -414,6 +475,9 @@ func get_career_upgrade_cap(upgrade_id: String) -> int:
 		"delivery_sync_reserve": return 2
 		"delivery_sync_parallel": return 3
 		"delivery_release_burn_down": return 5
+		"opsdev_pipeline_capacity": return OPSDEV_TOOLCHAIN_MAX_CAP - OPSDEV_TOOLCHAIN_BASE_CAP
+		"security_cryo_acl": return 3
+		"security_storm_ids": return 3
 	return 0
 
 
@@ -425,6 +489,12 @@ func apply_career_upgrade(upgrade_id: String) -> void:
 			delivery_sync_parallel_level = mini(get_career_upgrade_cap(upgrade_id), delivery_sync_parallel_level + 1)
 		"delivery_release_burn_down":
 			delivery_release_burn_down_level = mini(get_career_upgrade_cap(upgrade_id), delivery_release_burn_down_level + 1)
+		"opsdev_pipeline_capacity":
+			opsdev_pipeline_capacity_level = mini(get_career_upgrade_cap(upgrade_id), opsdev_pipeline_capacity_level + 1)
+		"security_cryo_acl":
+			security_cryo_acl_level = mini(get_career_upgrade_cap(upgrade_id), security_cryo_acl_level + 1)
+		"security_storm_ids":
+			security_storm_ids_level = mini(get_career_upgrade_cap(upgrade_id), security_storm_ids_level + 1)
 	_sync_delivery_skill_cooldown()
 
 
@@ -455,6 +525,30 @@ func get_career_upgrade_card(upgrade_id: String) -> Dictionary:
 				"title": "联调关单加速 R · %.2fs/次" % delivery_q_kill_ultimate_reduction(next),
 				"description": "Q 造成击杀时，大招剩余 CD -%.2fs → -%.2fs · 单次 Q 最多削减 %.1fs → %.1fs · 5 阶封顶" % [delivery_q_kill_ultimate_reduction(current), delivery_q_kill_ultimate_reduction(next), delivery_q_cast_ultimate_reduction_cap(current), delivery_q_cast_ultimate_reduction_cap(next)],
 				"color": Color("ff8d6b"),
+			}
+		"opsdev_pipeline_capacity":
+			return {
+				"id": upgrade_id,
+				"name": "流水线扩容  STACK %d → %d" % [current, next],
+				"title": "Runtime Toolchain 扩容至 %d 槽" % (OPSDEV_TOOLCHAIN_BASE_CAP + next),
+				"description": "工具链容量 %d → %d · Q 与 R 可额外编译一种不同武器 · 最高 7 槽，每个槽位独立继承武器几何与伤害" % [OPSDEV_TOOLCHAIN_BASE_CAP + current, OPSDEV_TOOLCHAIN_BASE_CAP + next],
+				"color": Color("9cff72"),
+			}
+		"security_cryo_acl":
+			return {
+				"id": upgrade_id,
+				"name": "冷冻 ACL  STACK %d → %d" % [current, next],
+				"title": "墙体挂载 CRYO ACL %d" % next,
+				"description": "所有职业墙附加冰冻策略 · 减速持续与冻结窗口提高 · 同时恢复部分墙体压力，CRYO + IDS 满配时回到原强度上限",
+				"color": Color("70d8ff"),
+			}
+		"security_storm_ids":
+			return {
+				"id": upgrade_id,
+				"name": "雷暴 IDS  STACK %d → %d" % [current, next],
+				"title": "墙体挂载 STORM IDS %d" % next,
+				"description": "每次墙体灼烧额外向附近故障释放 %d 道链式闪电 · 闪电伤害与层数同步提高 · 同时恢复部分墙体压力" % (1 + next),
+				"color": Color("d6f36a"),
 			}
 	return {"id": upgrade_id, "name": upgrade_id, "title": "实施交付专精", "description": "", "color": accent}
 
@@ -546,11 +640,14 @@ func get_signature_upgrade_card(upgrade_id: String) -> Dictionary:
 				"color": Color("ff8c70"),
 			}
 		"signature_area":
+			var area_description := "射程 / 半径 / 墙长 ×%.2f → ×%.2f · 无限叠加" % [_signature_area_multiplier_for_level(current), _signature_area_multiplier_for_level(next)]
+			if career_id == "security":
+				area_description = "墙长 / 阻断宽度 / 灼烧圈 ×%.2f → ×%.2f · STACK 5 恢复完整范围 · 无限叠加" % [_signature_area_multiplier_for_level(current), _signature_area_multiplier_for_level(next)]
 			return {
 				"id": upgrade_id,
 				"name": "%s · 作用范围  STACK %d → %d" % [signature_name, current, next],
 				"title": "固有普攻：范围 ×%d" % next,
-				"description": "射程 / 半径 / 墙长 ×%.2f → ×%.2f · 无限叠加" % [_signature_area_multiplier_for_level(current), _signature_area_multiplier_for_level(next)],
+				"description": area_description,
 				"color": Color("c68cff"),
 			}
 	return {"id": upgrade_id, "name": upgrade_id, "title": "固有普攻成长", "description": "无限叠加", "color": accent}
@@ -579,6 +676,11 @@ func _signature_area_multiplier_for_level(level_value: int) -> float:
 	# L1 is immediately visible (+21%) and L5 reaches about +66%, then the
 	# asymptote protects melee identity, draw fill-rate, and world scale.
 	var growth_multiplier := 1.0 + 1.45 * resolved / (resolved + 6.0)
+	# Security's blocking wall was oppressive before any area investment. It
+	# starts as a compact checkpoint and recovers the previous full geometry at
+	# authored STACK 5; overclock growth beyond that ceiling remains unchanged.
+	if career_id == "security":
+		growth_multiplier *= lerpf(0.45, 1.0, clampf(resolved / 5.0, 0.0, 1.0))
 	return growth_multiplier * artifact_signature_area_multiplier
 
 
@@ -857,15 +959,15 @@ func _signature_network() -> int:
 
 func _signature_security() -> String:
 	var area_scale := _signature_area_multiplier()
-	var direction := _aim_direction(280.0 * area_scale)
+	var direction := _aim_direction(420.0 * area_scale)
 	var wall_count := _signature_quantity_value()
 	for wall_index in range(wall_count):
 		var centered := float(wall_index) - float(wall_count - 1) * 0.5
-		var center := player.global_position + direction * (118.0 * area_scale + centered * 32.0)
-		var half_length := 100.0 * area_scale
-		_add_wall(center - direction.orthogonal() * half_length, center + direction.orthogonal() * half_length, 3.4, "firewall", true, 22.0 * area_scale)
-	while walls.size() > 1 + wall_count:
-		walls.remove_at(0)
+		var center := player.global_position + direction * (152.0 * area_scale + centered * 42.0)
+		var half_length := 152.0 * area_scale
+		_add_wall(center - direction.orthogonal() * half_length, center + direction.orthogonal() * half_length, 5.8, "firewall", true, 34.0 * area_scale, 1.0, Color("ff6b45"), "security_signature")
+	while _count_walls("firewall") > 1 + wall_count:
+		_remove_oldest_wall("firewall")
 	return "firewall"
 
 
@@ -894,6 +996,8 @@ func _signature_helpdesk() -> int:
 
 
 func _signature_opsdev() -> int:
+	if opsdev_toolchain.is_empty():
+		_record_opsdev_snippet("idempotent_script", 1.0, false)
 	var area_scale := _signature_area_multiplier()
 	var target: Dictionary = swarm.call("get_nearest_target", player.global_position, 500.0 * area_scale)
 	if not bool(target.get("hit", false)):
@@ -975,12 +1079,17 @@ func _skill_network() -> void:
 
 
 func _skill_security(direction: Vector2) -> void:
-	var dash: Dictionary = player.call("perform_dash", direction, 165.0, 0.85)
+	var dash: Dictionary = player.call("perform_dash", direction, 245.0, 1.05)
 	var start := Vector2(dash["start"])
 	var finish := Vector2(dash["end"])
-	var side := direction.orthogonal() * 48.0
-	_add_wall(start + side, finish + side, 4.2, "corridor")
-	_add_wall(start - side, finish - side, 4.2, "corridor")
+	var side := direction.orthogonal() * 76.0
+	_add_wall(start + side, finish + side, 7.0, "corridor", false, 38.0, 1.45, Color("ff4d32"), "security_q")
+	_add_wall(start - side, finish - side, 7.0, "corridor", false, 38.0, 1.45, Color("ff4d32"), "security_q")
+	_add_wall(finish - side, finish + side, 7.0, "corridor", false, 42.0, 1.65, Color("ff9b42"), "security_q_gate")
+	swarm.call("damage_line", start, finish, 92.0, _damage(48.0) * _security_action_damage_factor(), -1, "security_q_ignition")
+	swarm.call("push_area", finish, 190.0, 58.0)
+	_add_visual({"type": "security_ignition", "from": start, "to": finish, "color": Color("ff6b32"), "ttl": 0.72, "max": 0.72, "width": 92.0})
+	player.call("grant_invulnerability", 0.75)
 
 
 func _skill_it_ops() -> void:
@@ -1002,11 +1111,18 @@ func _skill_helpdesk() -> void:
 		projection.call("take_shell_damage", 28.0)
 
 
-func _skill_opsdev() -> void:
+func _skill_opsdev(direction: Vector2) -> void:
+	if opsdev_toolchain.is_empty():
+		_record_opsdev_snippet("idempotent_script", 1.0, false)
+	opsdev_compile_serial += 1
+	_schedule_opsdev_toolchain(direction, "opsdev_q_%d" % opsdev_compile_serial, false)
+	var compile_center := player.global_position + direction.normalized() * 300.0
+	swarm.call("damage_area", compile_center, 320.0, _damage(42.0), "opsdev_q_link")
+	if swarm.has_method("amplify_damage_area"):
+		swarm.call("amplify_damage_area", compile_center, 360.0, 1.22, 2.4)
+	_add_visual({"type": "opsdev_compile_burst", "center": compile_center, "radius": 360.0, "color": accent, "ttl": 0.68, "max": 0.68})
 	signature_timer = 0.0
-	var positions: Array[Vector2] = swarm.call("get_random_enemy_positions", 3)
-	for index in range(positions.size()):
-		pending_actions.append({"type": "script_repeat", "delay": 0.18 + float(index) * 0.16, "position": positions[index], "damage": _damage(20.0), "repeat": 1})
+	_add_visual({"type": "opsdev_compile_frame", "center": player.global_position, "direction": direction, "color": accent, "ttl": 0.92, "max": 0.92, "slots": opsdev_toolchain.size()})
 
 
 func _skill_sre(direction: Vector2) -> void:
@@ -1121,8 +1237,17 @@ func _ultimate_network() -> void:
 
 func _ultimate_security() -> void:
 	ultimate_mode = "security_lockdown"
-	ultimate_left = 7.0
+	ultimate_left = 9.0
 	ultimate_tick = 0.0
+	var hex_radius := 365.0
+	var points: Array[Vector2] = []
+	for index in range(6):
+		points.append(player.global_position + Vector2.from_angle(TAU * float(index) / 6.0) * hex_radius)
+	for index in range(6):
+		_add_wall(points[index], points[(index + 1) % 6], 9.0, "lockdown", false, 44.0, 1.85, Color("ff3158"), "security_r_hex")
+	swarm.call("damage_area", player.global_position, 520.0, _damage(86.0) * _security_action_damage_factor(), "security_r_boot")
+	swarm.call("push_area", player.global_position, 520.0, 92.0)
+	_add_visual({"type": "security_lockdown_boot", "center": player.global_position, "radius": 520.0, "color": Color("ff3158"), "ttl": 0.88, "max": 0.88})
 
 
 func _ultimate_it_ops() -> void:
@@ -1139,8 +1264,16 @@ func _ultimate_helpdesk() -> void:
 
 
 func _ultimate_opsdev() -> void:
-	for index in range(3):
-		pending_actions.append({"type": "iac_wave", "delay": float(index) * 0.48, "stage": index, "center": player.global_position})
+	if opsdev_toolchain.is_empty():
+		_record_opsdev_snippet("idempotent_script", 1.0, false)
+	ultimate_mode = "opsdev_hot_reload"
+	ultimate_left = OPSDEV_HOT_RELOAD_DURATION
+	ultimate_tick = _opsdev_combo_duration() + 0.12
+	opsdev_hot_reload_epoch = 0
+	opsdev_hot_reload_seen.clear()
+	_schedule_opsdev_combo_sequence("opsdev_r_boot", false)
+	_add_visual({"type": "opsdev_hot_reload", "center": player.global_position, "color": accent, "ttl": 1.16, "max": 1.16})
+	_add_visual({"type": "opsdev_world_compile", "center": player.global_position, "radius": 540.0, "color": accent, "ttl": 1.0, "max": 1.0})
 
 
 func _ultimate_sre() -> void:
@@ -1208,20 +1341,43 @@ func _update_walls(delta: float) -> void:
 		var wall: Dictionary = walls[index]
 		wall["ttl"] = float(wall["ttl"]) - delta
 		wall["tick"] = float(wall["tick"]) - delta
+		var start := Vector2(wall["start"])
+		var finish := Vector2(wall["end"])
+		var line_width := float(wall.get("width", 22.0))
+		var kind := String(wall.get("kind", "firewall"))
+		if kind != "traffic_link" and swarm.has_method("block_line"):
+			swarm.call("block_line", start, finish, line_width * 0.62, player.global_position)
 		if float(wall["tick"]) <= 0.0:
-			var start := Vector2(wall["start"])
-			var finish := Vector2(wall["end"])
-			var line_width := float(wall.get("width", 22.0))
-			var kind := String(wall.get("kind", "firewall"))
-			var base_damage := 18.0 if kind == "traffic_link" else 8.0
-			var wall_damage := (_signature_damage(base_damage) if bool(wall.get("signature", false)) else _damage(base_damage)) * float(wall.get("effect_scale", 1.0))
+			var base_damage := 18.0
+			match kind:
+				"firewall": base_damage = 16.0
+				"corridor": base_damage = 24.0
+				"lockdown": base_damage = 29.0
+			var wall_damage := (_signature_damage(base_damage) * _security_signature_damage_factor() if bool(wall.get("signature", false)) else _damage(base_damage) * _security_action_damage_factor()) * float(wall.get("effect_scale", 1.0))
 			swarm.call("damage_line", start, finish, line_width, wall_damage, -1, String(wall.get("source_id", "")))
-			for sample_index in range(5):
-				var sample := start.lerp(finish, float(sample_index) / 4.0)
-				swarm.call("slow_area", sample, maxf(28.0, line_width * 1.45), 0.42 if kind == "traffic_link" else 0.55)
+			var sample_count := 7 if kind != "traffic_link" else 5
+			for sample_index in range(sample_count):
+				var sample := start.lerp(finish, float(sample_index) / float(sample_count - 1))
+				var is_compact_signature_wall := kind == "firewall" and bool(wall.get("signature", false))
+				var effect_radius := maxf(12.0 if is_compact_signature_wall else 34.0, line_width * 1.55)
+				swarm.call("slow_area", sample, effect_radius, 0.42 if kind == "traffic_link" else 0.72)
 				if kind != "traffic_link":
-					swarm.call("push_area", sample, maxf(36.0, line_width * 1.65), 11.0)
-			wall["tick"] = 0.32
+					swarm.call("push_area", sample, effect_radius, 16.0 if kind == "firewall" else 24.0)
+					_add_visual({"type": "security_flame", "center": sample, "radius": effect_radius, "color": Color(wall.get("color", Color("ff6b45"))), "ttl": 0.34, "max": 0.34})
+					var frost_level := int(wall.get("frost_level", 0))
+					if frost_level > 0:
+						swarm.call("slow_area", sample, effect_radius * 1.18, 0.78 + float(frost_level) * 0.24)
+						if swarm.has_method("root_area"):
+							swarm.call("root_area", sample, effect_radius, 0.10 + float(frost_level) * 0.07)
+						_add_visual({"type": "security_frost", "center": sample, "radius": effect_radius * 1.10, "color": Color("70d8ff"), "ttl": 0.42, "max": 0.42})
+					var storm_level := int(wall.get("storm_level", 0))
+					if storm_level > 0 and sample_index == sample_count / 2:
+						var lightning_hits: Array[Vector2] = swarm.call("damage_nearest_targets", sample, 180.0 + float(storm_level) * 35.0, _damage(_security_storm_damage(storm_level)) * float(wall.get("effect_scale", 1.0)), 1 + storm_level, 0.72, String(wall.get("source_id", "security_storm")))
+						var lightning_from := sample
+						for lightning_hit in lightning_hits:
+							_add_visual({"type": "security_lightning", "from": lightning_from, "to": lightning_hit, "color": Color("e8ff72"), "ttl": 0.22, "max": 0.22, "width": 4.0})
+							lightning_from = lightning_hit
+			wall["tick"] = 0.34 if kind == "traffic_link" else (0.20 if kind == "lockdown" else 0.24)
 		walls[index] = wall
 		if float(wall["ttl"]) <= 0.0:
 			walls.remove_at(index)
@@ -1278,6 +1434,165 @@ func _update_nodes(delta: float) -> void:
 		index -= 1
 
 
+func _on_combat_attack_fired(weapon_id: String, world_position: Vector2, intensity: float) -> void:
+	if career_id != "opsdev" or not OPSDEV_TOOL_NAMES.has(weapon_id):
+		return
+	_record_opsdev_snippet(weapon_id, intensity, true)
+	if ultimate_mode != "opsdev_hot_reload" or opsdev_hot_reload_seen.has(weapon_id):
+		return
+	opsdev_hot_reload_seen[weapon_id] = true
+	pending_actions.append({
+		"type": "opsdev_compiled_stage",
+		"delay": 0.10,
+		"weapon_id": weapon_id,
+		"origin": world_position,
+		"direction": _aim_direction(820.0),
+		"modifier": _opsdev_hot_modifier(weapon_id),
+		"damage_scale": 1.32 + minf(0.32, intensity * 0.06),
+		"revision": _opsdev_snippet_revision(weapon_id),
+		"source_id": "opsdev_r_hook",
+	})
+	_trim_pending_actions()
+
+
+func _record_opsdev_snippet(weapon_id: String, intensity: float, rewrite_existing: bool) -> void:
+	if not OPSDEV_TOOL_NAMES.has(weapon_id):
+		return
+	var existing_index := -1
+	for index in range(opsdev_toolchain.size()):
+		if String(opsdev_toolchain[index].get("id", "")) == weapon_id:
+			existing_index = index
+			break
+	if existing_index >= 0 and not rewrite_existing:
+		return
+	var revision := 1
+	if existing_index >= 0:
+		revision = mini(5, int(opsdev_toolchain[existing_index].get("revision", 1)) + 1)
+		opsdev_toolchain.remove_at(existing_index)
+	opsdev_toolchain.append({
+		"id": weapon_id,
+		"name": String(OPSDEV_TOOL_NAMES[weapon_id]),
+		"color": Color(OPSDEV_TOOL_COLORS[weapon_id]),
+		"revision": revision,
+		"intensity": maxf(1.0, intensity),
+	})
+	while opsdev_toolchain.size() > _opsdev_toolchain_cap():
+		opsdev_toolchain.pop_front()
+	_add_visual({"type": "opsdev_capture", "center": player.global_position + Vector2(0.0, -72.0), "color": Color(OPSDEV_TOOL_COLORS[weapon_id]), "ttl": 0.34, "max": 0.34, "slot": opsdev_toolchain.size() - 1})
+
+
+func _opsdev_snippet_revision(weapon_id: String) -> int:
+	for snippet in opsdev_toolchain:
+		if String(snippet.get("id", "")) == weapon_id:
+			return int(snippet.get("revision", 1))
+	return 1
+
+
+func _opsdev_toolchain_snapshot() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for index in range(opsdev_toolchain.size()):
+		var snippet := Dictionary(opsdev_toolchain[index]).duplicate(true)
+		snippet["modifier"] = _opsdev_stage_label(index)
+		result.append(snippet)
+	return result
+
+
+func _opsdev_pipeline_label() -> String:
+	if opsdev_toolchain.is_empty():
+		return "等待首个脚本"
+	var labels: Array[String] = []
+	for index in range(opsdev_toolchain.size()):
+		var snippet: Dictionary = opsdev_toolchain[index]
+		labels.append("%s[%s]" % [String(snippet.get("name", "JOB")), _opsdev_stage_label(index)])
+	return " > ".join(labels)
+
+
+func _opsdev_toolchain_cap() -> int:
+	return mini(OPSDEV_TOOLCHAIN_MAX_CAP, OPSDEV_TOOLCHAIN_BASE_CAP + opsdev_pipeline_capacity_level)
+
+
+func _opsdev_stage_label(index: int) -> String:
+	return OPSDEV_STAGE_MODIFIERS[index % OPSDEV_STAGE_MODIFIERS.size()]
+
+
+func _opsdev_stage_modifier(index: int) -> String:
+	match _opsdev_stage_label(index):
+		"FORK", "FANOUT": return "fork"
+		"LOOP", "CACHE": return "loop"
+		"OPT", "VECTOR": return "optimize"
+		"JIT": return "merge"
+	return "optimize"
+
+
+func _schedule_opsdev_toolchain(direction: Vector2, source_id: String, hot_reload: bool) -> void:
+	for index in range(opsdev_toolchain.size()):
+		var snippet: Dictionary = opsdev_toolchain[index]
+		var modifier := _opsdev_hot_modifier(String(snippet["id"])) if hot_reload else _opsdev_stage_modifier(index)
+		var centered := float(index) - float(opsdev_toolchain.size() - 1) * 0.5
+		pending_actions.append({
+			"type": "opsdev_compiled_stage",
+			"delay": 0.03 + float(index) * (0.075 if hot_reload else 0.13),
+			"weapon_id": String(snippet["id"]),
+			"origin": player.global_position,
+			"direction": direction.normalized().rotated(centered * (0.22 if hot_reload else 0.16)),
+			"modifier": modifier,
+			"damage_scale": (1.28 if hot_reload else 1.36) * (1.0 + float(int(snippet.get("revision", 1)) - 1) * 0.12),
+			"revision": int(snippet.get("revision", 1)),
+			"source_id": source_id,
+		})
+	_trim_pending_actions()
+
+
+func _opsdev_combo_duration() -> float:
+	return 0.28 + float(maxi(1, opsdev_toolchain.size())) * 0.14
+
+
+func _schedule_opsdev_combo_sequence(source_id: String, final_combo: bool) -> void:
+	var slot_count := maxi(1, opsdev_toolchain.size())
+	var combo_origin := player.global_position
+	var previous_position := combo_origin
+	for index in range(opsdev_toolchain.size()):
+		var snippet: Dictionary = opsdev_toolchain[index]
+		var centered := float(index) - float(slot_count - 1) * 0.5
+		var tool_position := combo_origin + Vector2(centered * 72.0, -132.0 + absf(centered) * 10.0)
+		var release_angle := lerpf(-PI * 0.82, PI * 0.82, float(index) / float(maxi(1, slot_count - 1)))
+		var delay := 0.05 + float(index) * 0.14
+		pending_actions.append({
+			"type": "opsdev_combo_tool",
+			"delay": delay,
+			"weapon_id": String(snippet["id"]),
+			"modifier": "merge" if final_combo else _opsdev_stage_modifier(index),
+			"origin": combo_origin,
+			"tool_position": tool_position,
+			"previous_position": previous_position,
+			"direction": Vector2.from_angle(release_angle),
+			"damage_scale": (2.10 if final_combo else 1.02) * (1.0 + float(int(snippet.get("revision", 1)) - 1) * 0.12),
+			"hold": _opsdev_combo_duration() - delay + 0.62,
+			"index": index,
+			"slots": slot_count,
+			"final_combo": final_combo,
+			"source_id": source_id,
+		})
+		previous_position = tool_position
+	pending_actions.append({
+		"type": "opsdev_combo_commit",
+		"delay": _opsdev_combo_duration(),
+		"center": combo_origin,
+		"slots": slot_count,
+		"final_combo": final_combo,
+		"source_id": source_id,
+	})
+	_trim_pending_actions()
+
+
+func _opsdev_hot_modifier(weapon_id: String) -> String:
+	if weapon_id in ["bash", "worker", "idempotent_script"]:
+		return "fork"
+	if weapon_id in ["ping", "firewall", "log", "lock_zone"]:
+		return "loop"
+	return "optimize"
+
+
 func _update_pending_actions(delta: float) -> void:
 	var index := pending_actions.size() - 1
 	while index >= 0:
@@ -1302,7 +1617,7 @@ func _resolve_pending(pending: Dictionary) -> void:
 			_add_visual({"type": "blast", "center": position_value, "radius": radius, "color": Color(pending.get("color", accent)), "ttl": 0.26, "max": 0.26})
 			var repeat := int(pending.get("repeat", 1))
 			if repeat > 1:
-				pending_actions.append({"type": "script_repeat", "delay": 0.34, "position": position_value, "damage": float(pending["damage"]) * 0.9, "repeat": repeat - 1, "radius": radius, "source_id": source_id})
+				pending_actions.append({"type": "script_repeat", "delay": 0.34, "position": position_value, "damage": float(pending["damage"]) * 0.9, "repeat": repeat - 1, "radius": radius, "color": Color(pending.get("color", accent)), "source_id": source_id})
 		"release_package":
 			var position_value := Vector2(pending["position"])
 			var radius := float(pending["radius"])
@@ -1310,14 +1625,12 @@ func _resolve_pending(pending: Dictionary) -> void:
 			swarm.call("damage_area", position_value, radius, float(pending["damage"]), source_id)
 			_add_visual({"type": "blast", "center": position_value, "radius": radius, "color": accent, "ttl": 0.48, "max": 0.48})
 			_add_zone(position_value, "uat", radius * 0.82, 4.0, 0.0, false, 1.0, Color.TRANSPARENT, source_id)
-		"iac_wave":
-			var stage := int(pending["stage"])
-			var radius := 360.0 + float(stage) * 230.0
-			swarm.call("damage_area", player.global_position, radius, _damage(26.0 + float(stage) * 12.0))
-			_add_visual({"type": "ring", "center": player.global_position, "radius": radius, "color": accent, "ttl": 0.62, "max": 0.62})
-			if stage == 2 and combat != null:
-				for upgrade_id in combat.call("get_weapon_upgrade_ids"):
-					combat.call("prime_upgraded_skill", String(upgrade_id))
+		"opsdev_compiled_stage":
+			_resolve_opsdev_compiled_stage(pending)
+		"opsdev_combo_tool":
+			_resolve_opsdev_combo_tool(pending)
+		"opsdev_combo_commit":
+			_resolve_opsdev_combo_commit(pending)
 		"release_wave":
 			var stage := int(pending["stage"])
 			var radius := 220.0 + float(stage) * 150.0
@@ -1340,6 +1653,101 @@ func _resolve_pending(pending: Dictionary) -> void:
 			_resolve_ai_prefill_scan(pending)
 
 
+func _resolve_opsdev_compiled_stage(pending: Dictionary) -> void:
+	var weapon_id := String(pending.get("weapon_id", "idempotent_script"))
+	var modifier := String(pending.get("modifier", "optimize"))
+	var origin := Vector2(pending.get("origin", player.global_position))
+	var direction := Vector2(pending.get("direction", facing_direction)).normalized()
+	var damage_scale := float(pending.get("damage_scale", 0.78))
+	var source_id := String(pending.get("source_id", "opsdev_compile"))
+	var result: Dictionary = {}
+	if weapon_id == "idempotent_script":
+		result = _execute_compiled_idempotent(origin, direction, modifier, damage_scale, source_id)
+	elif combat != null and combat.has_method("execute_compiled_weapon"):
+		result = combat.call("execute_compiled_weapon", weapon_id, origin, direction, modifier, damage_scale, source_id)
+	var result_position := Vector2(result.get("position", origin + direction * 220.0))
+	var stage_color := Color(OPSDEV_TOOL_COLORS.get(weapon_id, accent))
+	_add_visual({"type": "opsdev_bytecode", "from": origin, "to": result_position, "color": stage_color, "ttl": 0.38, "max": 0.38, "modifier": modifier})
+	_add_visual({"type": "opsdev_stage", "center": result_position, "color": stage_color, "ttl": 0.46, "max": 0.46, "modifier": modifier})
+	if modifier == "loop" and not bool(pending.get("looped", false)):
+		var echo := pending.duplicate(true)
+		echo["delay"] = 0.30
+		echo["modifier"] = "loop_echo"
+		echo["damage_scale"] = damage_scale * 0.82
+		echo["looped"] = true
+		pending_actions.append(echo)
+	_trim_pending_actions()
+
+
+func _resolve_opsdev_combo_tool(pending: Dictionary) -> void:
+	var weapon_id := String(pending.get("weapon_id", "idempotent_script"))
+	var tool_position := Vector2(pending.get("tool_position", player.global_position))
+	var previous_position := Vector2(pending.get("previous_position", player.global_position))
+	var tool_color := Color(OPSDEV_TOOL_COLORS.get(weapon_id, accent))
+	_add_visual({
+		"type": "opsdev_combo_tool",
+		"center": tool_position,
+		"from": previous_position,
+		"weapon_id": weapon_id,
+		"label": String(OPSDEV_TOOL_NAMES.get(weapon_id, "JOB")),
+		"index": int(pending.get("index", 0)),
+		"slots": int(pending.get("slots", 1)),
+		"final_combo": bool(pending.get("final_combo", false)),
+		"color": tool_color,
+		"ttl": float(pending.get("hold", 0.72)),
+		"max": float(pending.get("hold", 0.72)),
+	})
+	_resolve_opsdev_compiled_stage({
+		"type": "opsdev_compiled_stage",
+		"weapon_id": weapon_id,
+		"modifier": String(pending.get("modifier", "optimize")),
+		"origin": Vector2(pending.get("origin", player.global_position)),
+		"direction": Vector2(pending.get("direction", facing_direction)),
+		"damage_scale": float(pending.get("damage_scale", 1.0)),
+		"source_id": String(pending.get("source_id", "opsdev_combo")),
+	})
+
+
+func _resolve_opsdev_combo_commit(pending: Dictionary) -> void:
+	var center := Vector2(pending.get("center", player.global_position))
+	var final_combo := bool(pending.get("final_combo", false))
+	var radius := 650.0 if final_combo else 520.0
+	var damage := _damage(95.0 if final_combo else 58.0)
+	swarm.call("damage_area", center, radius, damage, String(pending.get("source_id", "opsdev_combo")))
+	swarm.call("push_area", center, radius, 76.0 if final_combo else 48.0)
+	_add_visual({"type": "opsdev_combo_commit", "center": center, "radius": radius, "slots": int(pending.get("slots", 1)), "final_combo": final_combo, "color": Color("f1ffd8") if final_combo else accent, "ttl": 1.05, "max": 1.05})
+	if final_combo:
+		_add_visual({"type": "opsdev_merge", "center": center, "color": Color("eaffd1"), "ttl": 1.12, "max": 1.12, "slots": int(pending.get("slots", 1))})
+
+
+func _execute_compiled_idempotent(origin: Vector2, direction: Vector2, modifier: String, damage_scale: float, source_id: String) -> Dictionary:
+	var forked := modifier in ["fork", "merge"]
+	var optimized := modifier in ["optimize", "merge"]
+	var target_count := 3 if forked else 1
+	var targets := _select_priority_targets(origin, 680.0 * _signature_area_multiplier(), target_count)
+	var fallback_position := origin + direction * 240.0
+	if targets.is_empty():
+		swarm.call("damage_area", fallback_position, 64.0, _signature_damage(16.0) * damage_scale, source_id)
+		return {"executed": true, "hits": 0, "position": fallback_position}
+	var repeat_count := 3 if modifier == "merge" else (2 if optimized else 1)
+	var radius := (68.0 if optimized else 48.0) * _signature_area_multiplier()
+	for target in targets:
+		var entity_id := int(target["entity_id"])
+		var target_position := Vector2(target["position"])
+		_damage_entity_id(entity_id, _signature_damage(16.0) * damage_scale * (1.35 if optimized else 1.0), source_id)
+		pending_actions.append({
+			"type": "script_repeat",
+			"delay": 0.18,
+			"position": target_position,
+			"damage": _signature_damage(14.0) * damage_scale,
+			"repeat": repeat_count,
+			"radius": radius,
+			"color": Color(OPSDEV_TOOL_COLORS["idempotent_script"]),
+			"source_id": source_id,
+		})
+	return {"executed": true, "hits": targets.size(), "position": Vector2(targets[0]["position"])}
+
+
 func _update_ultimate(delta: float) -> void:
 	if ultimate_left <= 0.0:
 		if not ultimate_mode.is_empty():
@@ -1356,10 +1764,24 @@ func _update_ultimate(delta: float) -> void:
 				ultimate_tick = 0.58
 		"security_lockdown":
 			if ultimate_tick <= 0.0:
-				swarm.call("damage_area", player.global_position, 275.0, _damage(15.0))
-				swarm.call("slow_area", player.global_position, 285.0, 0.9)
-				swarm.call("push_area", player.global_position, 285.0, 15.0)
-				ultimate_tick = 0.42
+				swarm.call("damage_area", player.global_position, 440.0, _damage(28.0) * _security_action_damage_factor(), "security_r_pulse")
+				swarm.call("slow_area", player.global_position, 460.0, 1.1)
+				if security_cryo_acl_level > 0 and swarm.has_method("root_area"):
+					swarm.call("root_area", player.global_position, 430.0, 0.16 + float(security_cryo_acl_level) * 0.08)
+				swarm.call("push_area", player.global_position, 460.0, 28.0)
+				_add_visual({"type": "ring", "center": player.global_position, "radius": 440.0, "color": Color("ff3158"), "ttl": 0.38, "max": 0.38})
+				ultimate_tick = 0.34
+		"opsdev_hot_reload":
+			if ultimate_tick <= 0.0:
+				opsdev_hot_reload_epoch += 1
+				opsdev_hot_reload_seen.clear()
+				var epoch_direction := facing_direction.rotated(float(opsdev_hot_reload_epoch % 8) * TAU / 8.0)
+				_schedule_opsdev_toolchain(epoch_direction, "opsdev_r_epoch_%d" % opsdev_hot_reload_epoch, true)
+				swarm.call("damage_area", player.global_position, 610.0, _damage(24.0), "opsdev_r_epoch")
+				if swarm.has_method("amplify_damage_area"):
+					swarm.call("amplify_damage_area", player.global_position, 630.0, 1.16, OPSDEV_HOT_RELOAD_EPOCH + 0.18)
+				_add_visual({"type": "opsdev_epoch", "center": player.global_position, "color": accent, "ttl": 0.52, "max": 0.52, "epoch": opsdev_hot_reload_epoch})
+				ultimate_tick = OPSDEV_HOT_RELOAD_EPOCH
 		"sre_multi_active":
 			if not sre_failover_used and player.health / maxf(1.0, player.max_health) <= 0.20:
 				_perform_sre_failover()
@@ -1395,9 +1817,25 @@ func _record_position_history(delta: float) -> void:
 
 func _add_wall(start: Vector2, finish: Vector2, duration: float, kind: String, signature_source: bool = false, line_width: float = 22.0, effect_scale: float = 1.0, effect_color: Color = Color.TRANSPARENT, source_id: String = "") -> void:
 	var resolved_color := accent if effect_color.a <= 0.0 else effect_color
-	walls.append({"start": start, "end": finish, "ttl": duration, "tick": 0.0, "kind": kind, "signature": signature_source, "width": line_width, "effect_scale": effect_scale, "color": resolved_color, "source_id": source_id})
+	var is_security_wall := career_id == "security" and kind != "traffic_link"
+	walls.append({"start": start, "end": finish, "ttl": duration, "tick": 0.0, "kind": kind, "signature": signature_source, "width": line_width, "effect_scale": effect_scale, "color": resolved_color, "source_id": source_id, "frost_level": security_cryo_acl_level if is_security_wall else 0, "storm_level": security_storm_ids_level if is_security_wall else 0})
 	while walls.size() > MAX_WALLS:
 		walls.remove_at(0)
+
+
+func _count_walls(kind: String) -> int:
+	var result := 0
+	for wall in walls:
+		if String(wall.get("kind", "")) == kind:
+			result += 1
+	return result
+
+
+func _remove_oldest_wall(kind: String) -> void:
+	for wall_index in range(walls.size()):
+		if String(walls[wall_index].get("kind", "")) == kind:
+			walls.remove_at(wall_index)
+			return
 
 
 func _add_zone(position_value: Vector2, kind: String, radius: float, duration: float, arm_time: float, signature_source: bool = false, effect_scale: float = 1.0, effect_color: Color = Color.TRANSPARENT, source_id: String = "") -> void:
@@ -1861,6 +2299,10 @@ func _distance_to_nearest_enemy(origin: Vector2) -> float:
 
 
 func _finish_ultimate_mode(mode: String) -> void:
+	if mode == "opsdev_hot_reload":
+		_schedule_opsdev_combo_sequence("opsdev_r_merge", true)
+		_add_visual({"type": "opsdev_world_compile", "center": player.global_position, "radius": 650.0, "color": Color("eaffd1"), "ttl": 1.24, "max": 1.24})
+		opsdev_hot_reload_seen.clear()
 	if mode == "sre_multi_active":
 		for replica in sre_replicas:
 			var replica_position := Vector2(replica["position"])
@@ -1958,6 +2400,25 @@ func _resolved_direction(direction: Vector2) -> Vector2:
 	return _aim_direction(420.0)
 
 
+func _security_signature_damage_factor(level_value: int = -1) -> float:
+	if career_id != "security":
+		return 1.0
+	var resolved := signature_damage_level if level_value < 0 else level_value
+	return lerpf(0.50, 1.0, clampf(float(resolved) / 5.0, 0.0, 1.0))
+
+
+func _security_action_damage_factor(cryo_level: int = -1, storm_level: int = -1) -> float:
+	if career_id != "security":
+		return 1.0
+	var resolved_cryo := security_cryo_acl_level if cryo_level < 0 else cryo_level
+	var resolved_storm := security_storm_ids_level if storm_level < 0 else storm_level
+	return lerpf(0.50, 1.0, clampf(float(resolved_cryo + resolved_storm) / 6.0, 0.0, 1.0))
+
+
+func _security_storm_damage(level_value: int) -> float:
+	return [0.0, 7.0, 12.0, 19.0][clampi(level_value, 0, 3)]
+
+
 func _damage(base_damage: float) -> float:
 	var packet_multiplier := 1.15 if packet_capture_left > 0.0 and player.global_position.distance_to(packet_capture_position) <= 210.0 else 1.0
 	return base_damage * damage_multiplier * packet_multiplier * artifact_damage_multiplier
@@ -2020,11 +2481,26 @@ func _draw() -> void:
 		var finish := Vector2(wall["end"])
 		var wall_color := Color(wall.get("color", accent))
 		var visual_width := clampf(float(wall.get("width", 22.0)) / 22.0, 1.0, 2.8)
-		draw_line(start, finish, Color(0.03, 0.08, 0.10, 0.92), 18.0 * visual_width)
-		draw_line(start, finish, Color(wall_color, 0.88), 8.0 * visual_width)
+		var wall_direction := (finish - start).normalized()
+		var wall_normal := wall_direction.orthogonal()
+		var wall_phase := float(Time.get_ticks_msec()) * 0.004
+		draw_line(start, finish, Color(0.03, 0.01, 0.025, 0.94), 22.0 * visual_width)
+		draw_line(start, finish, Color(wall_color, 0.22), 15.0 * visual_width)
+		draw_line(start, finish, Color(wall_color, 0.94), 7.0 * visual_width)
 		for node_index in range(7):
 			var point := start.lerp(finish, float(node_index) / 6.0)
-			draw_rect(Rect2(point - Vector2(4, 4), Vector2(8, 8)), wall_color, false, 2.0)
+			draw_rect(Rect2(point - Vector2(5, 5), Vector2(10, 10)), Color("13070b"), true)
+			draw_rect(Rect2(point - Vector2(5, 5), Vector2(10, 10)), wall_color, false, 2.0)
+			if String(wall.get("kind", "")) != "traffic_link":
+				var flame_height := 13.0 + sin(wall_phase + float(node_index) * 1.7) * 6.0
+				draw_colored_polygon(PackedVector2Array([point - wall_direction * 7.0, point + wall_direction * 7.0, point + wall_normal * flame_height]), Color("ff7b32"))
+				if int(wall.get("frost_level", 0)) > 0:
+					draw_line(point - wall_normal * 12.0, point + wall_normal * 12.0, Color("9cecff"), 3.0)
+					draw_line(point - wall_direction * 7.0 - wall_normal * 7.0, point + wall_direction * 7.0 + wall_normal * 7.0, Color("d8f8ff"), 2.0)
+				if int(wall.get("storm_level", 0)) > 0 and node_index < 6:
+					var next_point := start.lerp(finish, float(node_index + 1) / 6.0)
+					var midpoint := point.lerp(next_point, 0.5) + wall_normal * sin(wall_phase * 1.8 + float(node_index)) * 7.0
+					draw_polyline(PackedVector2Array([point, midpoint, next_point]), Color("eaff72"), 3.0, true)
 	for zone in zones:
 		var position_value := Vector2(zone["position"])
 		var radius := float(zone["radius"])
@@ -2065,15 +2541,22 @@ func _draw() -> void:
 	if ultimate_mode == "security_lockdown":
 		var points := PackedVector2Array()
 		for index in range(6):
-			points.append(player.global_position + Vector2.from_angle(TAU * float(index) / 6.0) * 275.0)
+			points.append(player.global_position + Vector2.from_angle(TAU * float(index) / 6.0) * 365.0)
+		draw_colored_polygon(points, Color(accent, 0.035))
 		for index in range(6):
-			draw_line(points[index], points[(index + 1) % 6], Color(accent, 0.86), 8.0)
+			draw_line(points[index], points[(index + 1) % 6], Color(accent, 0.30), 20.0)
+			draw_line(points[index], points[(index + 1) % 6], Color(accent, 0.92), 7.0)
 	if ultimate_mode == "sre_multi_active":
 		_draw_sre_site(player.global_position, "AZ-A", Color("d8fff1"), 0.94)
 		for replica in sre_replicas:
 			var replica_position := Vector2(replica["position"])
 			draw_line(player.global_position, replica_position, Color(Color(replica["color"]), 0.22), 2.0)
 			_draw_sre_site(replica_position, String(replica["label"]), Color(replica["color"]), 0.72)
+	if ultimate_mode == "opsdev_hot_reload":
+		var reload_phase := float(Time.get_ticks_msec()) * 0.004
+		for reload_index in range(_opsdev_toolchain_cap()):
+			var reload_radius := 68.0 + float(reload_index) * 15.0
+			draw_arc(player.global_position, reload_radius, reload_phase + float(reload_index) * 1.7, reload_phase + float(reload_index) * 1.7 + 1.05, 20, Color(accent, 0.48), 3.0)
 	if ultimate_mode in ["ops_p1", "network_storm", "helpdesk_sla"]:
 		var aura_radius: float = float({"ops_p1": 145.0, "network_storm": 485.0, "helpdesk_sla": 185.0}.get(ultimate_mode, 160.0))
 		draw_arc(player.global_position, float(aura_radius), 0.0, TAU, 64, Color(accent, 0.55), 3.0)
@@ -2094,6 +2577,148 @@ func _draw() -> void:
 				if glow_width > 0.0:
 					draw_line(beam_start, beam_finish, Color(color, color.a * 0.20), glow_width)
 				draw_line(beam_start, beam_finish, color, float(effect.get("width", 3.0)))
+			"opsdev_bytecode":
+				var code_start := Vector2(effect["from"])
+				var code_finish := Vector2(effect["to"])
+				draw_line(code_start, code_finish, Color(color, color.a * 0.14), 13.0)
+				draw_line(code_start, code_finish, color, 3.5)
+				var code_direction := (code_finish - code_start).normalized()
+				if code_direction.length_squared() > 0.01:
+					for packet_index in range(4):
+						var packet_position := code_start.lerp(code_finish, 0.18 + float(packet_index) * 0.21)
+						var packet_side := code_direction.orthogonal() * 4.0
+						draw_colored_polygon(PackedVector2Array([packet_position + code_direction * 7.0, packet_position - code_direction * 4.0 + packet_side, packet_position - code_direction * 4.0 - packet_side]), color)
+			"opsdev_capture":
+				var capture_center := Vector2(effect["center"])
+				var capture_rect := Rect2(capture_center - Vector2(17.0, 10.0), Vector2(34.0, 20.0))
+				draw_rect(capture_rect, Color(color, color.a * 0.12), true)
+				draw_rect(capture_rect, color, false, 2.0)
+				draw_line(capture_rect.position + Vector2(5.0, 6.0), capture_rect.end - Vector2(9.0, 14.0), color, 2.0)
+				draw_line(capture_rect.position + Vector2(5.0, 13.0), capture_rect.end - Vector2(15.0, 7.0), color, 2.0)
+			"opsdev_compile_frame":
+				var frame_center := Vector2(effect["center"])
+				var frame_direction := Vector2(effect.get("direction", facing_direction)).normalized()
+				var slot_count := int(effect.get("slots", 1))
+				for slot_index in range(slot_count):
+					var slot_position := frame_center + frame_direction * (64.0 + float(slot_index) * 46.0)
+					var frame_rect := Rect2(slot_position - Vector2(16.0, 12.0), Vector2(32.0, 24.0))
+					draw_rect(frame_rect, Color(color, color.a * 0.10), true)
+					draw_rect(frame_rect, color, false, 2.5)
+					if slot_index + 1 < slot_count:
+						draw_line(slot_position + frame_direction * 18.0, slot_position + frame_direction * 30.0, color, 3.0)
+			"opsdev_stage":
+				var stage_center := Vector2(effect["center"])
+				var stage_rect := Rect2(stage_center - Vector2(22.0, 15.0), Vector2(44.0, 30.0))
+				draw_rect(stage_rect, Color(color, color.a * 0.09), true)
+				draw_rect(stage_rect, color, false, 3.0)
+				var modifier := String(effect.get("modifier", "optimize"))
+				if modifier == "fork" or modifier == "merge":
+					draw_line(stage_center + Vector2(-12.0, 0.0), stage_center + Vector2(0.0, 0.0), color, 3.0)
+					draw_line(stage_center, stage_center + Vector2(12.0, -8.0), color, 3.0)
+					draw_line(stage_center, stage_center + Vector2(12.0, 8.0), color, 3.0)
+				elif modifier.begins_with("loop"):
+					draw_arc(stage_center, 9.0, -PI * 0.35, PI * 1.25, 18, color, 3.0)
+					draw_colored_polygon(PackedVector2Array([stage_center + Vector2(-7.0, -8.0), stage_center + Vector2(-1.0, -9.0), stage_center + Vector2(-4.0, -3.0)]), color)
+				else:
+					draw_colored_polygon(PackedVector2Array([stage_center + Vector2(0.0, -10.0), stage_center + Vector2(10.0, 0.0), stage_center + Vector2(0.0, 10.0), stage_center + Vector2(-10.0, 0.0)]), Color(color, color.a * 0.35))
+			"opsdev_combo_tool":
+				var combo_tool_center := Vector2(effect["center"])
+				var combo_tool_from := Vector2(effect.get("from", combo_tool_center))
+				var combo_final := bool(effect.get("final_combo", false))
+				if combo_tool_from.distance_squared_to(combo_tool_center) > 4.0:
+					draw_line(combo_tool_from, combo_tool_center, Color(color, color.a * 0.18), 13.0)
+					draw_line(combo_tool_from, combo_tool_center, color, 4.0 if combo_final else 2.5)
+				var combo_rect := Rect2(combo_tool_center - Vector2(31.0, 20.0), Vector2(62.0, 40.0))
+				draw_rect(combo_rect, Color(0.01, 0.035, 0.045, color.a * 0.94), true)
+				draw_rect(combo_rect, color, false, 4.0 if combo_final else 2.5)
+				if combo_final:
+					draw_arc(combo_tool_center, 37.0 + (1.0 - alpha) * 8.0, 0.0, TAU, 24, Color(color, color.a * 0.55), 3.0)
+				var combo_label := String(effect.get("label", "JOB"))
+				var combo_text_size := UI_FONT.get_string_size(combo_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
+				draw_string(UI_FONT, combo_tool_center + Vector2(-combo_text_size.x * 0.5, 4.0), combo_label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color(color, color.a))
+				var combo_index := int(effect.get("index", 0))
+				for pip_index in range(int(effect.get("slots", 1))):
+					var pip_position := combo_tool_center + Vector2((float(pip_index) - float(int(effect.get("slots", 1)) - 1) * 0.5) * 6.0, 14.0)
+					draw_circle(pip_position, 1.7, Color(color, color.a if pip_index <= combo_index else color.a * 0.18))
+			"opsdev_combo_commit":
+				var combo_center := Vector2(effect["center"])
+				var combo_radius := float(effect.get("radius", 520.0)) * (0.88 + (1.0 - alpha) * 0.12)
+				var combo_slots := int(effect.get("slots", 1))
+				draw_circle(combo_center, combo_radius, Color(color, color.a * 0.035))
+				draw_arc(combo_center, combo_radius, 0.0, TAU, 72, color, 10.0)
+				draw_arc(combo_center, combo_radius * 0.72, 0.0, TAU, 64, Color(color, color.a * 0.46), 5.0)
+				for combo_ray_index in range(combo_slots):
+					var combo_ray := Vector2.from_angle(TAU * float(combo_ray_index) / float(maxi(1, combo_slots)))
+					draw_line(combo_center + combo_ray * 52.0, combo_center + combo_ray * combo_radius, Color(color, color.a * 0.48), 5.0)
+				var combo_text := "MERGE COMBO ×%d" % combo_slots
+				var combo_commit_text_size := UI_FONT.get_string_size(combo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 20)
+				var combo_badge_center := combo_center + Vector2(0.0, -68.0)
+				var combo_badge_size := combo_commit_text_size + Vector2(34.0, 24.0)
+				var combo_badge_rect := Rect2(combo_badge_center - combo_badge_size * 0.5, combo_badge_size)
+				draw_rect(combo_badge_rect, Color(0.008, 0.025, 0.034, color.a * 0.92), true)
+				draw_rect(combo_badge_rect, color, false, 3.0)
+				draw_string(UI_FONT, combo_badge_center + Vector2(-combo_commit_text_size.x * 0.5, 7.0), combo_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, color)
+			"opsdev_hot_reload":
+				var reload_center := Vector2(effect["center"])
+				var phase := (1.0 - alpha) * TAU * 2.0
+				for arc_index in range(3):
+					var reload_radius := 72.0 + float(arc_index) * 16.0
+					draw_arc(reload_center, reload_radius, phase + float(arc_index) * 1.6, phase + float(arc_index) * 1.6 + 1.15, 22, Color(color, color.a * 0.52), 3.0)
+			"opsdev_compile_burst", "opsdev_world_compile":
+				var compile_center := Vector2(effect["center"])
+				var compile_radius := float(effect.get("radius", 360.0)) * (1.08 - alpha * 0.08)
+				draw_circle(compile_center, compile_radius, Color(color, color.a * 0.035))
+				draw_arc(compile_center, compile_radius, 0.0, TAU, 64, color, 7.0)
+				for grid_index in range(-4, 5):
+					var grid_offset := float(grid_index) * compile_radius / 4.0
+					draw_line(compile_center + Vector2(-compile_radius, grid_offset), compile_center + Vector2(compile_radius, grid_offset), Color(color, color.a * 0.12), 1.5)
+					draw_line(compile_center + Vector2(grid_offset, -compile_radius), compile_center + Vector2(grid_offset, compile_radius), Color(color, color.a * 0.12), 1.5)
+			"opsdev_epoch":
+				var epoch_center := Vector2(effect["center"])
+				var epoch_radius := 74.0 + (1.0 - alpha) * 68.0
+				draw_arc(epoch_center, epoch_radius, 0.0, TAU, 40, color, 4.0)
+				for tick_index in range(8):
+					var tick_direction := Vector2.from_angle(TAU * float(tick_index) / 8.0)
+					draw_line(epoch_center + tick_direction * (epoch_radius - 7.0), epoch_center + tick_direction * (epoch_radius + 7.0), color, 2.0)
+			"opsdev_merge":
+				var merge_center := Vector2(effect["center"])
+				var merge_slots := int(effect.get("slots", 1))
+				var merge_radius := 62.0 + (1.0 - alpha) * 96.0
+				draw_arc(merge_center, merge_radius, 0.0, TAU, 48, color, 8.0)
+				for merge_index in range(merge_slots):
+					var merge_direction := Vector2.from_angle(TAU * float(merge_index) / float(maxi(1, merge_slots)))
+					draw_line(merge_center, merge_center + merge_direction * merge_radius, color, 6.0)
+			"security_ignition":
+				var ignition_start := Vector2(effect["from"])
+				var ignition_end := Vector2(effect["to"])
+				var ignition_width := float(effect.get("width", 92.0))
+				draw_line(ignition_start, ignition_end, Color(color, color.a * 0.10), ignition_width)
+				draw_line(ignition_start, ignition_end, Color("ffd36a", color.a * 0.78), 12.0)
+				for flame_index in range(9):
+					var flame_point := ignition_start.lerp(ignition_end, float(flame_index) / 8.0)
+					draw_circle(flame_point, 18.0 + (1.0 - alpha) * 18.0, Color("ff5a2f", color.a * 0.18))
+			"security_flame":
+				var flame_center := Vector2(effect["center"])
+				var flame_radius := float(effect.get("radius", 42.0))
+				draw_circle(flame_center, flame_radius * (1.12 - alpha * 0.12), Color(color, color.a * 0.11))
+				draw_arc(flame_center, flame_radius, 0.0, TAU, 18, color, 5.0)
+			"security_frost":
+				var frost_center := Vector2(effect["center"])
+				var frost_radius := float(effect.get("radius", 48.0))
+				draw_arc(frost_center, frost_radius, 0.0, TAU, 20, color, 4.0)
+				for frost_index in range(6):
+					var frost_direction := Vector2.from_angle(TAU * float(frost_index) / 6.0)
+					draw_line(frost_center, frost_center + frost_direction * frost_radius, Color(color, color.a * 0.58), 2.0)
+			"security_lightning":
+				var lightning_start := Vector2(effect["from"])
+				var lightning_end := Vector2(effect["to"])
+				var lightning_mid := lightning_start.lerp(lightning_end, 0.5) + (lightning_end - lightning_start).normalized().orthogonal() * 12.0
+				draw_polyline(PackedVector2Array([lightning_start, lightning_mid, lightning_end]), color, float(effect.get("width", 4.0)), true)
+			"security_lockdown_boot":
+				var lockdown_center := Vector2(effect["center"])
+				var lockdown_radius := float(effect.get("radius", 520.0)) * (1.10 - alpha * 0.10)
+				draw_circle(lockdown_center, lockdown_radius, Color(color, color.a * 0.05))
+				draw_arc(lockdown_center, lockdown_radius, 0.0, TAU, 72, color, 12.0)
 			"tensor_beam", "prefill_scan":
 				var tensor_start := Vector2(effect["from"])
 				var tensor_finish := Vector2(effect["to"])

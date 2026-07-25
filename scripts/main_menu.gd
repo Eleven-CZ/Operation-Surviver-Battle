@@ -899,7 +899,7 @@ func _upgrade_display_name(upgrade_id: String) -> String:
 		"firewall": return "防火墙领域"
 		"log": return "日志采集器"
 		"wrench": return "机柜扳手"
-		"rule_chain": return "iptables 规则链"
+		"rule_chain": return "IPTABLES 规则链"
 		"lock_zone": return "慢查询锁域"
 		"worker": return "Worker Pod"
 		"idempotency": return "幂等性"
