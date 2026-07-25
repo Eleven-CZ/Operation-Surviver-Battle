@@ -1,3 +1,4 @@
 .godot/
 builds/
 *.log
+output/**/*.import

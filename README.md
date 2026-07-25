@@ -1,27 +1,43 @@
 # iT-BATTLE：值班幸存者
 
-Godot 4.7.1 的高俯视 2D Survivor-like 可玩原型。当前版本已经形成“值班大厅 → 选择职业 → 六分钟事故班次 → RP / 履历结算 → 职业挑战与永久成长”的完整循环，并已把 AI 生成的战情室、职业角色、故障单位、同事投影、技能图标与 HUD 素材接入实机。
+[![Godot 4.7.1](https://img.shields.io/badge/Godot-4.7.1-478CBF?logo=godot-engine&logoColor=white)](https://godotengine.org/)
+[![Build and Release](https://github.com/Eleven-CZ/Operation-Surviver-Battle/actions/workflows/release.yml/badge.svg)](https://github.com/Eleven-CZ/Operation-Surviver-Battle/actions/workflows/release.yml)
 
-## 运行
+一款把线上事故、职业技能和办公室黑话做成战斗机制的高俯视 2D Survivor-like 游戏。进入值班大厅，选择 10 种 IT 职业之一，在六分钟事故班次中清理故障、处理发布、拉同事进 War Room，并把复盘收益投入永久成长。
+
+![iT-BATTLE 战斗画面](docs/screenshots/combat_showcase.png)
+
+当前版本已形成“值班大厅 → 选择职业 → 六分钟事故班次 → RP / 履历结算 → 职业挑战与永久成长”的完整循环，使用 Godot 4.7.1 开发，并已把战情室、职业角色、故障单位、同事投影、技能图标与 HUD 素材接入实机。
+
+## 下载
+
+前往 [Releases](https://github.com/Eleven-CZ/Operation-Surviver-Battle/releases) 下载最新版本：
+
+- Windows：解压 `iT-BATTLE-Windows-x86_64.zip`，运行 `iT-BATTLE.exe`。
+- macOS：解压 `iT-BATTLE-macOS-universal.zip`，运行 `iT-BATTLE.app`。当前自动构建未使用 Apple Developer ID 签名；如果被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认打开。
+
+## 本地运行
+
+要求 [Godot 4.7.1 Standard](https://godotengine.org/download/)；项目不需要额外插件或第三方依赖。
 
 直接开始游戏：
 
 ```bash
-/Applications/Godot.app/Contents/MacOS/Godot --path /Users/ye/code/iT-BATTLE
+godot --path .
 ```
 
 用编辑器打开：
 
 ```bash
-/Applications/Godot.app/Contents/MacOS/Godot --editor --path /Users/ye/code/iT-BATTLE
+godot --editor --path .
 ```
 
 完整流程自动冒烟测试（约 1 秒跑完 6 分钟时间轴）：
 
 ```bash
-/Applications/Godot.app/Contents/MacOS/Godot \
+godot \
   --headless \
-  --path /Users/ye/code/iT-BATTLE \
+  --path . \
   --fixed-fps 60 \
   --time-scale 60 \
   --quit-after 1200 \
@@ -34,8 +50,8 @@ Godot 4.7.1 的高俯视 2D Survivor-like 可玩原型。当前版本已经形�
 压测场景：
 
 ```bash
-/Applications/Godot.app/Contents/MacOS/Godot \
-  --path /Users/ye/code/iT-BATTLE \
+godot \
+  --path . \
   --editor res://scenes/benchmark.tscn
 ```
 
@@ -132,19 +148,37 @@ Godot 4.7.1 的高俯视 2D Survivor-like 可玩原型。当前版本已经形�
 ## 自动验证
 
 ```bash
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/profile.log --script res://tests/profile_store_test.gd -- --profile-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/career.log --script res://tests/career_runtime_test.gd -- --career-runtime-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/career-actions.log --script res://tests/career_actions_test.gd -- --career-actions-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/menu.log --script res://tests/menu_flow_test.gd -- --menu-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/event-runtime.log --script res://tests/event_runtime_test.gd -- --event-runtime-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/event-hud.log --script res://tests/event_hud_test.gd -- --event-hud-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/visual-assets.log --script res://tests/visual_assets_test.gd -- --visual-assets-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/difficulty.log --script res://tests/difficulty_system_test.gd -- --difficulty-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/audio-system.log --script res://tests/audio_system_test.gd -- --audio-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/growth.log --script res://tests/growth_and_elite_loot_test.gd -- --growth-elite-loot-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/meta-growth.log --script res://tests/meta_growth_runtime_test.gd -- --meta-growth-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/artifact.log --script res://tests/artifact_system_test.gd -- --artifact-system-test
-Godot --headless --path /Users/ye/code/iT-BATTLE --log-file /tmp/ally-support.log --script res://tests/ally_support_system_test.gd -- --ally-support-test
+godot --headless --path . --log-file /tmp/profile.log --script res://tests/profile_store_test.gd -- --profile-test
+godot --headless --path . --log-file /tmp/career.log --script res://tests/career_runtime_test.gd -- --career-runtime-test
+godot --headless --path . --log-file /tmp/career-actions.log --script res://tests/career_actions_test.gd -- --career-actions-test
+godot --headless --path . --log-file /tmp/menu.log --script res://tests/menu_flow_test.gd -- --menu-test
+godot --headless --path . --log-file /tmp/event-runtime.log --script res://tests/event_runtime_test.gd -- --event-runtime-test
+godot --headless --path . --log-file /tmp/event-hud.log --script res://tests/event_hud_test.gd -- --event-hud-test
+godot --headless --path . --log-file /tmp/visual-assets.log --script res://tests/visual_assets_test.gd -- --visual-assets-test
+godot --headless --path . --log-file /tmp/difficulty.log --script res://tests/difficulty_system_test.gd -- --difficulty-test
+godot --headless --path . --log-file /tmp/audio-system.log --script res://tests/audio_system_test.gd -- --audio-test
+godot --headless --path . --log-file /tmp/growth.log --script res://tests/growth_and_elite_loot_test.gd -- --growth-elite-loot-test
+godot --headless --path . --log-file /tmp/meta-growth.log --script res://tests/meta_growth_runtime_test.gd -- --meta-growth-test
+godot --headless --path . --log-file /tmp/artifact.log --script res://tests/artifact_system_test.gd -- --artifact-system-test
+godot --headless --path . --log-file /tmp/ally-support.log --script res://tests/ally_support_system_test.gd -- --ally-support-test
 ```
 
 十三项分别验证奖励幂等与阶梯解锁、10 职业协议、10 套固有攻击 / 小技能 / 大招与 CD、全池随机三选一、无限成长、移动与 CD 安全曲线、普攻范围实机预览、精英大水晶、两槽神器与四档掉率、主菜单与暂停流程、4 个事件 / 12 个策略、事件 HUD、全部生成素材、四档难度，以及完整动态音频和固定声道限流。
+
+## 自动构建与发布
+
+`.github/workflows/release.yml` 使用 GitHub Actions 在 Windows 与 macOS runner 上并行导出游戏。推送形如 `v0.1.0` 的标签后，工作流会自动：
+
+1. 安装 Godot 4.7.1 和对应导出模板。
+2. 分别导出 Windows x86_64 与 macOS universal 构建。
+3. 将两个平台的构建压缩为 ZIP。
+4. 创建 GitHub Release、自动生成更新说明并上传 ZIP。
+
+发布新版本：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+也可以在 GitHub Actions 页面手动运行工作流，只生成并保存两个平台的构建产物；手动运行不会创建正式 Release。

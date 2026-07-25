@@ -1,0 +1,91 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  GODOT_VERSION: "4.7.1"
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Windows
+            os: windows-latest
+            preset: Windows Desktop
+            export_path: builds/windows/iT-BATTLE.exe
+            package_name: iT-BATTLE-Windows-x86_64
+          - platform: macOS
+            os: macos-latest
+            preset: macOS
+            export_path: builds/macos/iT-BATTLE.app
+            package_name: iT-BATTLE-macOS-universal
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Godot
+        uses: chickensoft-games/setup-godot@v2
+        with:
+          version: ${{ env.GODOT_VERSION }}
+          use-dotnet: false
+          include-templates: true
+
+      - name: Import project resources
+        shell: bash
+        run: godot --headless --path . --import
+
+      - name: Export release build
+        shell: bash
+        run: godot --headless --path . --export-release "${{ matrix.preset }}" "${{ matrix.export_path }}"
+
+      - name: Package Windows build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Compress-Archive -Path builds/windows/* -DestinationPath "release/${{ matrix.package_name }}.zip" -Force
+
+      - name: Package macOS build
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p release
+          ditto -c -k --sequesterRsrc --keepParent "${{ matrix.export_path }}" "release/${{ matrix.package_name }}.zip"
+
+      - name: Upload packaged build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.package_name }}
+          path: release/${{ matrix.package_name }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download packaged builds
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create release and upload builds
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*.zip
