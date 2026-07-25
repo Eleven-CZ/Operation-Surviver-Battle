@@ -33,7 +33,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Godot
         uses: chickensoft-games/setup-godot@v2
@@ -48,7 +48,9 @@ jobs:
 
       - name: Export release build
         shell: bash
-        run: godot --headless --path . --export-release "${{ matrix.preset }}" "${{ matrix.export_path }}"
+        run: |
+          mkdir -p "$(dirname "${{ matrix.export_path }}")"
+          godot --headless --path . --export-release "${{ matrix.preset }}" "${{ matrix.export_path }}"
 
       - name: Package Windows build
         if: runner.os == 'Windows'
