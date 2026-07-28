@@ -22,6 +22,7 @@ var career_id := "ops"
 var career_badge := "OPS"
 var career_accent := Color("22d7d0")
 var facing_direction := Vector2.RIGHT
+var touch_input_vector := Vector2.ZERO
 
 
 func _ready() -> void:
@@ -40,6 +41,8 @@ func _physics_process(delta: float) -> void:
 	if input_enabled:
 		input_vector.x = float(Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT)) - float(Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT))
 		input_vector.y = float(Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN)) - float(Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP))
+		if touch_input_vector.length_squared() > 0.01:
+			input_vector = touch_input_vector
 		var joypads := Input.get_connected_joypads()
 		if joypads.size() > 0:
 			var joypad_id: int = joypads[0]
@@ -55,6 +58,10 @@ func _physics_process(delta: float) -> void:
 		clampf(position.y, WORLD_RECT.position.y, WORLD_RECT.end.y)
 	)
 	queue_redraw()
+
+
+func set_touch_input(direction: Vector2) -> void:
+	touch_input_vector = direction.limit_length(1.0)
 
 
 func take_damage(amount: float) -> bool:

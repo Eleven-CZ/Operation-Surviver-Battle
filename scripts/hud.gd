@@ -10,6 +10,7 @@ const HUD_OVERLAY_OPSDEV_TEXTURE := preload("res://assets/generated/combat_hud_o
 const SKILL_ICON_TEXTURE := preload("res://assets/generated/skill_icons_5x2.png")
 const COWORKER_SPRITE_TEXTURE := preload("res://assets/generated/coworker_sprites_4x2.png")
 const MiniRadarScript := preload("res://scripts/mini_radar.gd")
+const MobileJoystickScript := preload("res://scripts/mobile_joystick.gd")
 const SKILL_ICON_ORDER: Array[String] = ["bash", "ping", "firewall", "log", "wrench", "rule_chain", "lock_zone", "worker", "runbook", "redundancy"]
 
 signal upgrade_selected(upgrade_id: String)
@@ -23,6 +24,8 @@ signal pause_requested
 signal resume_requested
 signal career_skill_requested
 signal career_ultimate_requested
+signal mobile_movement_changed(direction: Vector2)
+signal mobile_interaction_changed(active: bool)
 signal artifact_reel_finished
 
 var root_control: Control
@@ -109,6 +112,11 @@ var career_ultimate_cover: ColorRect
 var career_ultimate_cooldown: Label
 var career_ultimate_name: Label
 var career_ultimate_button: Button
+var mobile_controls: Control
+var mobile_joystick: Control
+var mobile_interact_button: Button
+var mobile_pause_button: Button
+var mobile_controls_visible := false
 var opsdev_toolchain_panel: Control
 var opsdev_toolchain_frames: Array[PanelContainer] = []
 var opsdev_toolchain_icons: Array[TextureRect] = []
@@ -314,6 +322,7 @@ func _build_hud() -> void:
 	_build_skill_tray()
 	_build_career_action_slots()
 	_build_opsdev_toolchain()
+	_build_mobile_controls()
 
 	var hint := _make_label("WASD 移动 · Q/Space 小技能 · R 大招 · E 对齐 · Esc 暂停", 11, Color("b6d7e3") if high_contrast else Color("7095a8"))
 	root_control.add_child(hint)
@@ -333,6 +342,10 @@ func _build_hud() -> void:
 	overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	overlay.color = Color(0.0, 0.02, 0.035, 0.88 if high_contrast else 0.76)
 	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	overlay.visibility_changed.connect(func() -> void:
+		if overlay.visible:
+			reset_mobile_controls()
+	)
 	var center := CenterContainer.new()
 	overlay.add_child(center)
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -614,6 +627,67 @@ func _build_career_action_slots() -> void:
 	career_ultimate_name = ultimate_parts["name"]
 	career_ultimate_button = ultimate_parts["button"]
 	career_ultimate_button.pressed.connect(func() -> void: career_ultimate_requested.emit())
+
+
+func _build_mobile_controls() -> void:
+	mobile_controls_visible = OS.has_feature("mobile") or OS.get_cmdline_user_args().has("--mobile-controls")
+	mobile_controls = Control.new()
+	root_control.add_child(mobile_controls)
+	mobile_controls.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	mobile_controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mobile_controls.visible = mobile_controls_visible
+
+	mobile_joystick = MobileJoystickScript.new()
+	mobile_controls.add_child(mobile_joystick)
+	mobile_joystick.position = Vector2(44, 500)
+	mobile_joystick.size = Vector2(176, 176)
+	mobile_joystick.direction_changed.connect(func(direction: Vector2) -> void: mobile_movement_changed.emit(direction))
+
+	mobile_interact_button = Button.new()
+	mobile_controls.add_child(mobile_interact_button)
+	mobile_interact_button.position = Vector2(1040, 554)
+	mobile_interact_button.size = Vector2(116, 96)
+	mobile_interact_button.text = "按住\n对齐"
+	mobile_interact_button.focus_mode = Control.FOCUS_NONE
+	mobile_interact_button.add_theme_font_size_override("font_size", 18)
+	mobile_interact_button.add_theme_stylebox_override("normal", _upgrade_card_style(Color(0.08, 0.06, 0.02, 0.84), Color("ffd36a"), 3))
+	mobile_interact_button.add_theme_stylebox_override("pressed", _upgrade_card_style(Color(0.20, 0.13, 0.02, 0.96), Color("fff0a8"), 4))
+	mobile_interact_button.button_down.connect(func() -> void: mobile_interaction_changed.emit(true))
+	mobile_interact_button.button_up.connect(func() -> void: mobile_interaction_changed.emit(false))
+	mobile_interact_button.mouse_exited.connect(func() -> void:
+		if mobile_interact_button.button_pressed:
+			mobile_interaction_changed.emit(false)
+	)
+
+	mobile_pause_button = Button.new()
+	mobile_controls.add_child(mobile_pause_button)
+	mobile_pause_button.position = Vector2(1174, 24)
+	mobile_pause_button.size = Vector2(52, 52)
+	mobile_pause_button.text = "Ⅱ"
+	mobile_pause_button.tooltip_text = "暂停"
+	mobile_pause_button.focus_mode = Control.FOCUS_NONE
+	mobile_pause_button.add_theme_font_size_override("font_size", 22)
+	mobile_pause_button.add_theme_stylebox_override("normal", _upgrade_card_style(Color(0.01, 0.04, 0.06, 0.86), Color("75f3df"), 2))
+	mobile_pause_button.pressed.connect(func() -> void: pause_requested.emit())
+
+
+func reset_mobile_controls() -> void:
+	if mobile_joystick != null:
+		mobile_joystick.call("reset")
+	mobile_movement_changed.emit(Vector2.ZERO)
+	mobile_interaction_changed.emit(false)
+
+
+func get_mobile_controls_snapshot() -> Dictionary:
+	return {
+		"visible": mobile_controls != null and mobile_controls.visible,
+		"joystick": mobile_joystick != null,
+		"interact": mobile_interact_button != null,
+		"pause": mobile_pause_button != null,
+		"joystick_rect": Rect2(mobile_joystick.position, mobile_joystick.size) if mobile_joystick != null else Rect2(),
+		"interact_rect": Rect2(mobile_interact_button.position, mobile_interact_button.size) if mobile_interact_button != null else Rect2(),
+		"pause_rect": Rect2(mobile_pause_button.position, mobile_pause_button.size) if mobile_pause_button != null else Rect2(),
+	}
 
 
 func _build_opsdev_toolchain() -> void:

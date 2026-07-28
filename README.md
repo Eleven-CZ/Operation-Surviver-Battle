@@ -3,22 +3,46 @@
 [![Godot 4.7.1](https://img.shields.io/badge/Godot-4.7.1-478CBF?logo=godot-engine&logoColor=white)](https://godotengine.org/)
 [![Build and Release](https://github.com/Eleven-CZ/Operation-Surviver-Battle/actions/workflows/release.yml/badge.svg)](https://github.com/Eleven-CZ/Operation-Surviver-Battle/actions/workflows/release.yml)
 
-一款把线上事故、职业技能和办公室黑话做成战斗机制的高俯视 2D Survivor-like 游戏。进入值班大厅，选择 10 种 IT 职业之一，在六分钟事故班次中清理故障、处理发布、拉同事进 War Room，并把复盘收益投入永久成长。
+一款支持 Windows、macOS、Android 与 iOS 的高俯视 2D Survivor-like 游戏，把线上事故、职业技能和办公室黑话做成战斗机制。进入值班大厅，选择 10 种 IT 职业之一，在六分钟事故班次中清理故障、处理发布、拉同事进 War Room，并把复盘收益投入永久成长。
 
 ![iT-BATTLE 战斗画面](docs/screenshots/combat_showcase.png)
 
 当前版本已形成“值班大厅 → 选择职业 → 六分钟事故班次 → RP / 履历结算 → 职业挑战与永久成长”的完整循环，使用 Godot 4.7.1 开发，并已把战情室、职业角色、故障单位、同事投影、技能图标与 HUD 素材接入实机。
 
-## 下载
+## 多端支持
+
+| 平台 | 自动构建产物 | 安装状态 |
+| --- | --- | --- |
+| Windows x86_64 | `iT-BATTLE-Windows-x86_64.zip` | 解压即玩 |
+| macOS universal | `iT-BATTLE-macOS-universal.zip` | 未公证，首次启动需手动确认 |
+| Android ARMv7 / ARM64 | `iT-BATTLE-Android-universal.apk` | 已使用 CI 临时调试证书签名，可直接侧载 |
+| iOS / iPadOS 15+ | `iT-BATTLE-iOS-Xcode-project.zip`、`iT-BATTLE-iOS-unsigned-app.zip` | CI 可完成未签名编译；真机安装仍需在 Xcode 中自签 |
+
+移动端采用横屏布局：左下虚拟摇杆移动，点击底栏两侧使用职业小技能与大招，右下按住“对齐”完成协作验收，右上按钮暂停。菜单、三选一和设置页面均可直接触控。
+
+## 下载与安装
 
 前往 [Releases](https://github.com/Eleven-CZ/Operation-Surviver-Battle/releases) 下载最新版本：
 
 - Windows：解压 `iT-BATTLE-Windows-x86_64.zip`，运行 `iT-BATTLE.exe`。
 - macOS：解压 `iT-BATTLE-macOS-universal.zip`，运行 `iT-BATTLE.app`。当前自动构建未使用 Apple Developer ID 签名；如果被 Gatekeeper 拦截，请在“系统设置 → 隐私与安全性”中确认打开。
+- Android：下载 `iT-BATTLE-Android-universal.apk`，在系统提示时允许浏览器或文件管理器“安装未知应用”，然后打开 APK 安装。不需要 Google Play 开发者账号。当前工作流每次运行都会生成临时调试签名；如果覆盖安装时报“签名不一致”，请先卸载旧版本再安装，新旧签名之间不能直接升级，卸载会清除本机存档。
+
+### 没有付费 Apple 开发者账号时安装 iOS 版
+
+iPhone 和 iPad 不允许直接安装 GitHub Actions 生成的未签名 App，所以 `iT-BATTLE-iOS-unsigned-app.zip` 不能直接装到未越狱设备。无需加入付费 Apple Developer Program，但需要一台 Mac、最新版 Xcode、普通 Apple ID 和数据线或已配对的无线调试：
+
+1. 下载并解压 `iT-BATTLE-iOS-Xcode-project.zip`，打开其中的 `iT-BATTLE.xcodeproj`。
+2. 用 Apple ID 登录 Xcode，在项目 Target 的 `Signing & Capabilities` 中启用 `Automatically manage signing`，并选择自己的 `Personal Team`。
+3. 如果 Xcode 提示 Bundle Identifier 已被占用，将 `com.elevencz.itbattle` 改成个人唯一值，例如 `com.yourname.itbattle`。
+4. 连接并解锁 iPhone / iPad；iOS 16 及以上还需在“设置 → 隐私与安全性 → 开发者模式”中启用开发者模式。
+5. 在 Xcode 顶部选择设备，点击 Run。首次打开时如有提示，再到设备的“VPN 与设备管理”中信任对应开发者。
+
+免费 Personal Team 安装通常约 7 天后失效，需要重新连接 Xcode 构建；Apple 对免费签名的设备数和 App 数也有限制。没有 Mac 时，官方支持的真机分发只能使用付费开发者账号配合 TestFlight、Ad Hoc 或 App Store。
 
 ## 本地运行
 
-要求 [Godot 4.7.1 Standard](https://godotengine.org/download/)；项目不需要额外插件或第三方依赖。
+桌面运行要求 [Godot 4.7.1 Standard](https://godotengine.org/download/)；项目不需要额外插件或第三方依赖。本地导出 Android 还需要 JDK 与 Android SDK，本地导出或安装 iOS 真机版需要 macOS 与 Xcode。
 
 直接开始游戏：
 
@@ -62,6 +86,7 @@ godot \
 - `R` / 手柄 Y / 点击底栏右侧：职业大招
 - `E` / 手柄 A：对齐压力投影的验收标准
 - `Esc` / 手柄 Start：暂停 / 继续，打开值班菜单
+- 手机 / 平板：左下虚拟摇杆移动；点击小技能和大招；右下按住对齐；右上暂停
 - `P`：立即触发线上发布（开发快捷键）
 - `O`：立即生成 OOM 137 精英
 - `B`：立即生成 Incident Core Boss
@@ -161,18 +186,21 @@ godot --headless --path . --log-file /tmp/growth.log --script res://tests/growth
 godot --headless --path . --log-file /tmp/meta-growth.log --script res://tests/meta_growth_runtime_test.gd -- --meta-growth-test
 godot --headless --path . --log-file /tmp/artifact.log --script res://tests/artifact_system_test.gd -- --artifact-system-test
 godot --headless --path . --log-file /tmp/ally-support.log --script res://tests/ally_support_system_test.gd -- --ally-support-test
+godot --headless --path . --log-file /tmp/mobile-controls.log --script res://tests/mobile_controls_test.gd -- --mobile-controls
 ```
 
-十三项分别验证奖励幂等与阶梯解锁、10 职业协议、10 套固有攻击 / 小技能 / 大招与 CD、全池随机三选一、无限成长、移动与 CD 安全曲线、普攻范围实机预览、精英大水晶、两槽神器与四档掉率、主菜单与暂停流程、4 个事件 / 12 个策略、事件 HUD、全部生成素材、四档难度，以及完整动态音频和固定声道限流。
+十四项分别验证奖励幂等与阶梯解锁、10 职业协议、10 套固有攻击 / 小技能 / 大招与 CD、全池随机三选一、无限成长、移动与 CD 安全曲线、普攻范围实机预览、精英大水晶、两槽神器与四档掉率、主菜单与暂停流程、4 个事件 / 12 个策略、事件 HUD、全部生成素材、四档难度、完整动态音频和固定声道限流，以及移动端虚拟摇杆、触屏对齐与暂停入口。
 
 ## 自动构建与发布
 
-`.github/workflows/release.yml` 使用 GitHub Actions 在 Windows 与 macOS runner 上并行导出游戏。推送形如 `v0.1.0` 的标签后，工作流会自动：
+`.github/workflows/release.yml` 使用 GitHub Actions 在 Windows、macOS 与 Linux runner 上并行导出四个平台。推送形如 `v0.1.0` 的标签后，工作流会自动：
 
 1. 安装 Godot 4.7.1 和对应导出模板。
-2. 分别导出 Windows x86_64 与 macOS universal 构建。
-3. 将两个平台的构建压缩为 ZIP。
-4. 创建 GitHub Release、自动生成更新说明并上传 ZIP。
+2. 导出 Windows x86_64 与 macOS universal 构建。
+3. 导出 Android ARMv7 / ARM64 APK，并用无需开发者账号的临时 CI 证书完成对齐、签名与校验。
+4. 在 macOS runner 上导出 iOS Xcode 工程，并用关闭代码签名的 `xcodebuild` 完成真机 Debug App 编译。
+5. 上传桌面 ZIP、可安装 Android APK、iOS Xcode 工程和未签名 iOS App。
+6. 创建 GitHub Release、自动生成更新说明并附上全部平台产物。
 
 发布新版本：
 
@@ -181,4 +209,4 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-也可以在 GitHub Actions 页面手动运行工作流，只生成并保存两个平台的构建产物；手动运行不会创建正式 Release。
+也可以在 GitHub Actions 页面手动运行工作流，只生成并保存四个平台的构建产物；手动运行不会创建正式 Release。由于 Android 默认使用每次运行临时生成的调试签名，正式长期分发时建议再配置一把固定 keystore；iOS 正式分发则必须配置 Apple Developer Program 证书和 provisioning profile。

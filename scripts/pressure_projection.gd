@@ -17,6 +17,7 @@ var interaction_progress := 0.0
 var debug_auto_interact := false
 var interaction_speed_multiplier := 1.0
 var persona_id := "product"
+var touch_interact := false
 
 
 func configure(player_node: Node2D) -> void:
@@ -75,7 +76,7 @@ func _physics_process(delta: float) -> void:
 		var joypads := Input.get_connected_joypads()
 		if joypads.size() > 0:
 			joy_interact = Input.is_joy_button_pressed(joypads[0], JOY_BUTTON_A)
-		var interacting := debug_auto_interact or Input.is_key_pressed(KEY_E) or joy_interact
+		var interacting := debug_auto_interact or touch_interact or Input.is_key_pressed(KEY_E) or joy_interact
 		if close_enough and interacting:
 			interaction_progress = minf(1.2, interaction_progress + delta * interaction_speed_multiplier)
 		else:
@@ -86,6 +87,10 @@ func _physics_process(delta: float) -> void:
 	if ally:
 		global_position = global_position.lerp(player.global_position + Vector2(74, -58), minf(1.0, delta * 4.0))
 	queue_redraw()
+
+
+func set_touch_interact(active_value: bool) -> void:
+	touch_interact = active_value
 
 
 func _draw() -> void:

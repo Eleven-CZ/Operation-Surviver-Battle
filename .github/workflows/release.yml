@@ -30,6 +30,16 @@ jobs:
             preset: macOS
             export_path: builds/macos/iT-BATTLE.app
             package_name: iT-BATTLE-macOS-universal
+          - platform: Android
+            os: ubuntu-latest
+            preset: Android
+            export_path: builds/android/iT-BATTLE-unsigned.apk
+            package_name: iT-BATTLE-Android-universal
+          - platform: iOS
+            os: macos-latest
+            preset: iOS Xcode Project
+            export_path: builds/ios/iT-BATTLE.xcodeproj
+            package_name: iT-BATTLE-iOS-unsigned
 
     steps:
       - name: Check out repository
@@ -46,11 +56,20 @@ jobs:
         shell: bash
         run: godot --headless --path . --import
 
-      - name: Export release build
+      - name: Verify mobile controls
+        if: matrix.platform == 'Android' || matrix.platform == 'iOS'
+        shell: bash
+        run: godot --headless --path . --log-file "${RUNNER_TEMP}/mobile-controls.log" --script res://tests/mobile_controls_test.gd -- --mobile-controls
+
+      - name: Export platform build
         shell: bash
         run: |
           mkdir -p "$(dirname "${{ matrix.export_path }}")"
-          godot --headless --path . --export-release "${{ matrix.preset }}" "${{ matrix.export_path }}"
+          if [ "${{ matrix.platform }}" = "iOS" ]; then
+            godot --headless --path . --export-debug "${{ matrix.preset }}" "${{ matrix.export_path }}"
+          else
+            godot --headless --path . --export-release "${{ matrix.preset }}" "${{ matrix.export_path }}"
+          fi
 
       - name: Package Windows build
         if: runner.os == 'Windows'
@@ -60,17 +79,65 @@ jobs:
           Compress-Archive -Path builds/windows/* -DestinationPath "release/${{ matrix.package_name }}.zip" -Force
 
       - name: Package macOS build
-        if: runner.os == 'macOS'
+        if: matrix.platform == 'macOS'
         shell: bash
         run: |
           mkdir -p release
           ditto -c -k --sequesterRsrc --keepParent "${{ matrix.export_path }}" "release/${{ matrix.package_name }}.zip"
 
+      - name: Sign and package Android build
+        if: matrix.platform == 'Android'
+        shell: bash
+        run: |
+          mkdir -p release
+          keytool -genkeypair -noprompt \
+            -keystore "${RUNNER_TEMP}/it-battle-ci.keystore" \
+            -storepass android \
+            -alias itbattle-ci \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=iT-BATTLE CI, OU=Development, O=Eleven-CZ, L=Shanghai, ST=Shanghai, C=CN"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "${SDK_ROOT}" && test -d "${SDK_ROOT}/build-tools"
+          BUILD_TOOLS_DIR="$(find "${SDK_ROOT}/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -x "${BUILD_TOOLS_DIR}/zipalign" && test -x "${BUILD_TOOLS_DIR}/apksigner"
+          "${BUILD_TOOLS_DIR}/zipalign" -p -f 4 "${{ matrix.export_path }}" "${RUNNER_TEMP}/iT-BATTLE-aligned.apk"
+          "${BUILD_TOOLS_DIR}/apksigner" sign \
+            --ks "${RUNNER_TEMP}/it-battle-ci.keystore" \
+            --ks-key-alias itbattle-ci \
+            --ks-pass pass:android \
+            --key-pass pass:android \
+            --out "release/${{ matrix.package_name }}.apk" \
+            "${RUNNER_TEMP}/iT-BATTLE-aligned.apk"
+          "${BUILD_TOOLS_DIR}/apksigner" verify --verbose "release/${{ matrix.package_name }}.apk"
+
+      - name: Compile and package unsigned iOS build
+        if: matrix.platform == 'iOS'
+        shell: bash
+        run: |
+          test -d "${{ matrix.export_path }}"
+          xcodebuild \
+            -project "${{ matrix.export_path }}" \
+            -configuration Debug \
+            -sdk iphoneos \
+            -derivedDataPath builds/ios-derived \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            DEVELOPMENT_TEAM="" \
+            build
+          mkdir -p release
+          ditto -c -k --sequesterRsrc --keepParent builds/ios "release/iT-BATTLE-iOS-Xcode-project.zip"
+          IOS_APP_PATH="$(find builds/ios-derived/Build/Products/Debug-iphoneos -maxdepth 1 -type d -name '*.app' -print -quit)"
+          test -n "${IOS_APP_PATH}"
+          ditto -c -k --sequesterRsrc --keepParent "${IOS_APP_PATH}" "release/iT-BATTLE-iOS-unsigned-app.zip"
+
       - name: Upload packaged build
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.package_name }}
-          path: release/${{ matrix.package_name }}.zip
+          path: release/*
           if-no-files-found: error
 
   release:
@@ -90,4 +157,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: release-assets/*.zip
+          files: release-assets/*

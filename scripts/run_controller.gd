@@ -210,6 +210,10 @@ func _ready() -> void:
 		hud.connect("career_skill_requested", _on_career_skill_requested)
 	if hud.has_signal("career_ultimate_requested"):
 		hud.connect("career_ultimate_requested", _on_career_ultimate_requested)
+	if hud.has_signal("mobile_movement_changed"):
+		hud.connect("mobile_movement_changed", _on_mobile_movement_changed)
+	if hud.has_signal("mobile_interaction_changed"):
+		hud.connect("mobile_interaction_changed", _on_mobile_interaction_changed)
 	if hud.has_signal("artifact_reel_finished"):
 		hud.connect("artifact_reel_finished", _on_artifact_reel_finished)
 
@@ -2038,6 +2042,14 @@ func _on_career_ultimate_requested() -> void:
 	career_actions.call("try_ultimate")
 
 
+func _on_mobile_movement_changed(direction: Vector2) -> void:
+	player.call("set_touch_input", direction)
+
+
+func _on_mobile_interaction_changed(active: bool) -> void:
+	projection.call("set_touch_interact", active)
+
+
 func _on_career_action_feedback(title: String, detail: String, color: Color) -> void:
 	hud.show_stack_feedback(title, detail, color)
 
@@ -2084,6 +2096,10 @@ func _restart() -> void:
 func _pause_run() -> void:
 	if ended or upgrade_modal_open or event_prompted and not event_active and event_outcome == "not_started":
 		return
+	player.call("set_touch_input", Vector2.ZERO)
+	projection.call("set_touch_interact", false)
+	if hud.has_method("reset_mobile_controls"):
+		hud.call("reset_mobile_controls")
 	get_tree().paused = true
 	hud.show_pause_menu(career, combat_build_summary)
 
