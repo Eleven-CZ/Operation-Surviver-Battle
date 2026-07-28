@@ -134,7 +134,7 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "${IOS_APP_PATH}" "release/iT-BATTLE-iOS-unsigned-app.zip"
 
       - name: Upload packaged build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.package_name }}
           path: release/*
@@ -148,7 +148,7 @@ jobs:
 
     steps:
       - name: Download packaged builds
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: release-assets
           merge-multiple: true

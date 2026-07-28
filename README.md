@@ -33,7 +33,7 @@
 iPhone 和 iPad 不允许直接安装 GitHub Actions 生成的未签名 App，所以 `iT-BATTLE-iOS-unsigned-app.zip` 不能直接装到未越狱设备。无需加入付费 Apple Developer Program，但需要一台 Mac、最新版 Xcode、普通 Apple ID 和数据线或已配对的无线调试：
 
 1. 下载并解压 `iT-BATTLE-iOS-Xcode-project.zip`，打开其中的 `iT-BATTLE.xcodeproj`。
-2. 用 Apple ID 登录 Xcode，在项目 Target 的 `Signing & Capabilities` 中启用 `Automatically manage signing`，并选择自己的 `Personal Team`。
+2. 用 Apple ID 登录 Xcode，在项目 Target 的 `Signing & Capabilities` 中启用 `Automatically manage signing`，并选择自己的 `Personal Team`；这会覆盖 CI 导出时用于通过 Godot 校验的占位 Team ID。
 3. 如果 Xcode 提示 Bundle Identifier 已被占用，将 `com.elevencz.itbattle` 改成个人唯一值，例如 `com.yourname.itbattle`。
 4. 连接并解锁 iPhone / iPad；iOS 16 及以上还需在“设置 → 隐私与安全性 → 开发者模式”中启用开发者模式。
 5. 在 Xcode 顶部选择设备，点击 Run。首次打开时如有提示，再到设备的“VPN 与设备管理”中信任对应开发者。
