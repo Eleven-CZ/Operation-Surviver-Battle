@@ -36,21 +36,54 @@ const SUNO_BGM02_PATHS := {
 	"recovery": "res://assets/audio/bgm/user/bgm02.ogg",
 }
 
+const MAXIMUM_BREACH_PATHS := {
+	"menu": "res://assets/audio/bgm/user/maximum_breach.ogg",
+	"run": "res://assets/audio/bgm/user/maximum_breach.ogg",
+	"escalation": "res://assets/audio/bgm/user/maximum_breach.ogg",
+	"boss": "res://assets/audio/bgm/user/maximum_breach.ogg",
+	"recovery": "res://assets/audio/bgm/user/maximum_breach.ogg",
+}
+
+const TERMINAL_OVERWRITE_PATHS := {
+	"menu": "res://assets/audio/bgm/user/terminal_overwrite.ogg",
+	"run": "res://assets/audio/bgm/user/terminal_overwrite.ogg",
+	"escalation": "res://assets/audio/bgm/user/terminal_overwrite.ogg",
+	"boss": "res://assets/audio/bgm/user/terminal_overwrite.ogg",
+	"recovery": "res://assets/audio/bgm/user/terminal_overwrite.ogg",
+}
+
+const UNAUTHORIZED_ENTRY_PATHS := {
+	"menu": "res://assets/audio/bgm/user/unauthorized_entry.ogg",
+	"run": "res://assets/audio/bgm/user/unauthorized_entry.ogg",
+	"escalation": "res://assets/audio/bgm/user/unauthorized_entry.ogg",
+	"boss": "res://assets/audio/bgm/user/unauthorized_entry.ogg",
+	"recovery": "res://assets/audio/bgm/user/unauthorized_entry.ogg",
+}
+
 const MUSIC_STYLES := {
 	"suno_01": SUNO_BGM01_PATHS,
 	"suno_02": SUNO_BGM02_PATHS,
+	"maximum_breach": MAXIMUM_BREACH_PATHS,
+	"terminal_overwrite": TERMINAL_OVERWRITE_PATHS,
+	"unauthorized_entry": UNAUTHORIZED_ENTRY_PATHS,
 	"pulse": PULSE_MUSIC_PATHS,
 	"ambient": AMBIENT_MUSIC_PATHS,
 }
 const MUSIC_STYLE_DEFINITIONS: Array[Dictionary] = [
 	{"id": "suno_01", "name": "自定义 BGM 01（默认）", "description": "用户导入的主背景曲；所有战斗阶段默认使用这一首。"},
 	{"id": "suno_02", "name": "自定义 BGM 02", "description": "用户导入的第二首背景曲，可在这里即时切换。"},
+	{"id": "maximum_breach", "name": "Maximum Breach", "description": "用户导入的高压电子背景曲，适合故障升级与 Boss 战。"},
+	{"id": "terminal_overwrite", "name": "Terminal Overwrite", "description": "用户导入的终端主题背景曲，可在所有场景循环播放。"},
+	{"id": "unauthorized_entry", "name": "Unauthorized Entry", "description": "用户导入的入侵主题背景曲，可在所有场景循环播放。"},
 	{"id": "pulse", "name": "脉冲值班（推荐）", "description": "节奏更清晰的低频律动；保留留白，不用持续高频镲片。"},
 	{"id": "ambient", "name": "夜班氛围（原版）", "description": "原有的稀疏氛围电子乐，适合更安静的长时间值班。"},
 ]
 const MUSIC_STYLE_GAINS_DB := {
 	"suno_01": -5.0,
 	"suno_02": -6.0,
+	"maximum_breach": -7.0,
+	"terminal_overwrite": -6.5,
+	"unauthorized_entry": -7.0,
 	"pulse": 0.0,
 	"ambient": 0.0,
 }

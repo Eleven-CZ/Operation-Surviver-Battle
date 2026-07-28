@@ -147,7 +147,7 @@ func _merge_profile(saved: Dictionary) -> void:
 		data["last_difficulty"] = "normal"
 	var settings: Dictionary = data.get("settings", {})
 	var saved_music_style := String(settings.get("music_style", "suno_01"))
-	if saved_music_style not in ["suno_01", "suno_02", "pulse", "ambient"]:
+	if saved_music_style not in ["suno_01", "suno_02", "maximum_breach", "terminal_overwrite", "unauthorized_entry", "pulse", "ambient"]:
 		settings["music_style"] = "suno_01"
 	elif saved_schema < 5 and saved_music_style == "pulse":
 		# Pulse was a project default rather than a player-selected import. Move

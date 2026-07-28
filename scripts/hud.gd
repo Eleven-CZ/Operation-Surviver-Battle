@@ -32,6 +32,7 @@ var xp_label: Label
 var time_label: Label
 var health_bar: ProgressBar
 var xp_bar: ProgressBar
+var status_panel: PanelContainer
 var career_protocol_label: Label
 var event_label: Label
 var build_label: Label
@@ -120,6 +121,8 @@ var last_ultimate_action_id := ""
 var difficulty_id := "normal"
 var difficulty_name := "普通"
 var difficulty_color := Color("65e890")
+var career_protocol_text := "职业协议 · 初始化"
+var build_summary_text := "Bash ×1"
 
 
 func _ready() -> void:
@@ -167,38 +170,63 @@ func _build_hud() -> void:
 	radar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build_ally_tracker()
 
-	var status_panel := PanelContainer.new()
+	health_label = _make_label("100 / 100", 10, Color("dffdf3"))
+	root_control.add_child(health_label)
+	health_label.position = Vector2(65, 21)
+	health_label.size = Vector2(178, 20)
+	health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	health_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	health_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	health_label.add_theme_constant_override("outline_size", 1)
+	health_label.add_theme_color_override("font_outline_color", Color("041019"))
+	xp_label = _make_label("L1 · 0 / 20", 9, Color("d9f4ff"))
+	root_control.add_child(xp_label)
+	xp_label.position = Vector2(44, 61)
+	xp_label.size = Vector2(162, 18)
+	xp_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	xp_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	xp_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	xp_label.add_theme_constant_override("outline_size", 1)
+	xp_label.add_theme_color_override("font_outline_color", Color("041019"))
+
+	status_panel = PanelContainer.new()
 	root_control.add_child(status_panel)
 	status_panel.position = Vector2(18, 92)
-	status_panel.custom_minimum_size = Vector2(390, 154)
-	status_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.055, 0.08, 0.92 if high_contrast else 0.64), Color("79fff0") if high_contrast else Color(0.20, 0.82, 0.76, 0.45)))
+	status_panel.custom_minimum_size = Vector2(300, 70)
+	status_panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	status_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.015, 0.055, 0.08, 0.92 if high_contrast else 0.58), Color("79fff0") if high_contrast else Color(0.20, 0.82, 0.76, 0.38)))
 	var status_margin := MarginContainer.new()
 	status_panel.add_child(status_margin)
-	status_margin.add_theme_constant_override("margin_left", 14)
-	status_margin.add_theme_constant_override("margin_right", 14)
-	status_margin.add_theme_constant_override("margin_top", 10)
-	status_margin.add_theme_constant_override("margin_bottom", 10)
+	status_margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	status_margin.add_theme_constant_override("margin_left", 11)
+	status_margin.add_theme_constant_override("margin_right", 11)
+	status_margin.add_theme_constant_override("margin_top", 7)
+	status_margin.add_theme_constant_override("margin_bottom", 7)
 	var status_box := VBoxContainer.new()
 	status_margin.add_child(status_box)
-	health_label = _make_label("服务健康度 100 / 100", 13, Color("66f2cf"))
-	xp_label = _make_label("L1  遥测 0 / 20", 12, Color("70caff"))
-	time_label = _make_label("值班 00:00 / 06:00", 13, Color("e4edf3"))
-	career_protocol_label = _make_label("职业协议 · 初始化", 12, Color("ffd36a"))
-	build_label = _make_label("Bash ×1", 11, Color("a9bdc9"))
-	build_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	build_label.custom_minimum_size = Vector2(350, 52)
-	status_box.add_child(health_label)
-	status_box.add_child(xp_label)
+	status_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	status_box.add_theme_constant_override("separation", 2)
+	time_label = _make_label("普通 · 00:00 / 06:00", 11, Color("e4edf3"))
+	career_protocol_label = _make_label(career_protocol_text, 11, Color("ffd36a"))
+	career_protocol_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	career_protocol_label.custom_minimum_size = Vector2(278, 34)
+	career_protocol_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	status_box.add_child(time_label)
 	status_box.add_child(career_protocol_label)
-	status_box.add_child(build_label)
+	# The full build is already represented by the bottom skill tray. Keep the
+	# text available to tests and expose it on hover instead of covering combat.
+	build_label = _make_label(build_summary_text, 11, Color("a9bdc9"))
+	root_control.add_child(build_label)
+	build_label.hide()
 	career_icon = TextureRect.new()
 	root_control.add_child(career_icon)
-	career_icon.position = Vector2(332, 102)
-	career_icon.size = Vector2(60, 60)
+	career_icon.position = Vector2(0, 0)
+	career_icon.size = Vector2(1, 1)
 	career_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	career_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	career_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	career_icon.hide()
+	_refresh_status_tooltip()
 	_build_artifact_slots()
 
 	event_label = _make_label("", 18, Color("ffd05a"))
@@ -506,10 +534,8 @@ func _configure_skill_tray_layout(expanded: bool) -> void:
 func _build_artifact_slots() -> void:
 	artifact_panel = PanelContainer.new()
 	root_control.add_child(artifact_panel)
-	# Build summaries can grow to seven lines once architectures, meta growth,
-	# and artifacts are present. Keep these slots below that dynamic panel.
-	artifact_panel.position = Vector2(18, 318)
-	artifact_panel.custom_minimum_size = Vector2(390, 88)
+	artifact_panel.position = Vector2(18, 170)
+	artifact_panel.custom_minimum_size = Vector2(300, 76)
 	artifact_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.035, 0.045, 0.055, 0.88), Color(0.72, 0.52, 0.18, 0.68)))
 	var margin := MarginContainer.new()
 	artifact_panel.add_child(margin)
@@ -520,7 +546,7 @@ func _build_artifact_slots() -> void:
 	var box := VBoxContainer.new()
 	margin.add_child(box)
 	box.add_theme_constant_override("separation", 4)
-	artifact_count_label = _make_label("神器协议  0 / 2", 11, Color("d7b45b"))
+	artifact_count_label = _make_label("神器协议  0 / 2", 10, Color("d7b45b"))
 	box.add_child(artifact_count_label)
 	var row := HBoxContainer.new()
 	box.add_child(row)
@@ -528,7 +554,7 @@ func _build_artifact_slots() -> void:
 	for slot_index in range(2):
 		var slot_panel := PanelContainer.new()
 		row.add_child(slot_panel)
-		slot_panel.custom_minimum_size = Vector2(177, 48)
+		slot_panel.custom_minimum_size = Vector2(135, 42)
 		slot_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		slot_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 		slot_panel.add_theme_stylebox_override("panel", _panel_style(Color(0.018, 0.032, 0.042, 0.94), Color("425d68")))
@@ -545,19 +571,19 @@ func _build_artifact_slots() -> void:
 		slot_row.add_theme_constant_override("separation", 7)
 		var icon := TextureRect.new()
 		slot_row.add_child(icon)
-		icon.custom_minimum_size = Vector2(36, 36)
+		icon.custom_minimum_size = Vector2(30, 30)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.modulate = Color(0.45, 0.56, 0.61, 0.28)
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var badge := _make_label("◇", 20, Color("607986"))
+		var badge := _make_label("◇", 16, Color("607986"))
 		slot_row.add_child(badge)
 		badge.custom_minimum_size = Vector2.ZERO
 		badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		badge.hide()
-		var name := _make_label("空神器槽", 12, Color("718b96"))
+		var name := _make_label("空神器槽", 10, Color("718b96"))
 		slot_row.add_child(name)
 		name.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		name.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -766,10 +792,10 @@ func _build_ally_tracker() -> void:
 
 
 func update_status(health: float, maximum_health: float, level: int, xp: int, xp_required: int, run_time: float, duration: float) -> void:
-	health_label.text = "服务健康度 %d / %d" % [ceili(health), ceili(maximum_health)]
+	health_label.text = "%d / %d" % [ceili(health), ceili(maximum_health)]
 	health_label.modulate = Color("ff786c") if health / maximum_health < 0.3 else Color.WHITE
-	xp_label.text = "L%d  遥测 %d / %d" % [level, xp, xp_required]
-	time_label.text = "%s难度 · 值班 %s / %s" % [difficulty_name, _format_time(run_time), _format_time(duration)]
+	xp_label.text = "L%d · %d / %d" % [level, xp, xp_required]
+	time_label.text = "%s · %s / %s" % [difficulty_name, _format_time(run_time), _format_time(duration)]
 	time_label.add_theme_color_override("font_color", difficulty_color)
 	health_bar.max_value = maxf(1.0, maximum_health)
 	health_bar.value = health
@@ -784,7 +810,15 @@ func configure_difficulty(config: Dictionary) -> void:
 
 
 func update_build(summary: String) -> void:
+	build_summary_text = summary
 	build_label.text = summary
+	_refresh_status_tooltip()
+
+
+func _refresh_status_tooltip() -> void:
+	if status_panel == null:
+		return
+	status_panel.tooltip_text = "%s\n\n当前构筑\n%s" % [career_protocol_text, build_summary_text]
 
 
 func update_artifact_slots(definitions: Array) -> void:
@@ -1071,8 +1105,10 @@ func configure_career(career: Dictionary) -> void:
 
 
 func update_career_protocol(text: String, color: Color = Color("ffd36a")) -> void:
+	career_protocol_text = text
 	career_protocol_label.text = text
 	career_protocol_label.add_theme_color_override("font_color", color)
+	_refresh_status_tooltip()
 
 
 func show_artifact_reel(selected_definition: Dictionary, pool_values: Array) -> void:

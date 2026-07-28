@@ -25,6 +25,8 @@ func _run() -> void:
 	_require(String(profile.get_settings().get("music_style", "")) == "suno_01", "new profiles default to BGM01")
 	profile.call("_merge_profile", {"schema_version": 4, "settings": {"music_style": "pulse"}})
 	_require(String(profile.get_settings().get("music_style", "")) == "suno_01", "legacy pulse defaults migrate to BGM01")
+	profile.call("_merge_profile", {"schema_version": 6, "settings": {"music_style": "maximum_breach"}})
+	_require(String(profile.get_settings().get("music_style", "")) == "maximum_breach", "new imported BGM selections survive profile loading")
 	_require(profile.session_event_id == "release", "release is the default selected event")
 	_require(profile.session_difficulty_id == "normal" and profile.is_difficulty_unlocked("normal"), "normal is the default unlocked difficulty")
 	_require(not profile.select_difficulty("advanced"), "a locked difficulty cannot be selected")

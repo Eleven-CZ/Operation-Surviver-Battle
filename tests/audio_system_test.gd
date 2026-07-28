@@ -16,7 +16,7 @@ func _run() -> void:
 	var music_paths: Dictionary = asset_paths["music"]
 	var music_styles: Dictionary = asset_paths["music_styles"]
 	var sfx_paths: Dictionary = asset_paths["sfx"]
-	_require(music_styles.size() == 4, "both imported BGM tracks plus the two original suites are registered")
+	_require(music_styles.size() == 7, "all five imported BGM tracks plus the two original suites are registered")
 	_require(music_paths.size() == 5 and String(director.call("get_music_style")) == "suno_01", "BGM01 is the default five-context score")
 	_require(sfx_paths.size() == 44, "the complete combat cue library is registered")
 	for style_id in music_styles:
@@ -27,10 +27,15 @@ func _run() -> void:
 			_require(FileAccess.file_exists(path), "%s/%s music source exists" % [style_id, music_id])
 			var stream: Resource = load(path)
 			_require(stream is AudioStream and (stream as AudioStream).get_length() >= 28.0, "%s/%s is a full-length loadable loop" % [style_id, music_id])
-	var looped_bgm01: AudioStream = director.call("_load_music", "res://assets/audio/bgm/user/bgm01.ogg")
-	var looped_bgm02: AudioStream = director.call("_load_music", "res://assets/audio/bgm/user/bgm02.ogg")
-	_require(looped_bgm01 is AudioStreamOggVorbis and (looped_bgm01 as AudioStreamOggVorbis).loop, "BGM01 is configured as a looping OGG stream")
-	_require(looped_bgm02 is AudioStreamOggVorbis and (looped_bgm02 as AudioStreamOggVorbis).loop, "BGM02 is configured as a looping OGG stream")
+	for imported_path in [
+		"res://assets/audio/bgm/user/bgm01.ogg",
+		"res://assets/audio/bgm/user/bgm02.ogg",
+		"res://assets/audio/bgm/user/maximum_breach.ogg",
+		"res://assets/audio/bgm/user/terminal_overwrite.ogg",
+		"res://assets/audio/bgm/user/unauthorized_entry.ogg",
+	]:
+		var looped_stream: AudioStream = director.call("_load_music", imported_path)
+		_require(looped_stream is AudioStreamOggVorbis and (looped_stream as AudioStreamOggVorbis).loop, "%s is configured as a looping OGG stream" % imported_path)
 	for cue_id in sfx_paths:
 		var path := String(sfx_paths[cue_id])
 		_require(FileAccess.file_exists(path), "%s cue source exists" % cue_id)
@@ -55,6 +60,9 @@ func _run() -> void:
 	_require(bool(director.call("set_music_style", "suno_02")), "BGM02 can be switched on at runtime")
 	snapshot = director.call("get_audio_snapshot")
 	_require(String(snapshot["current_track"]) == "run" and String(snapshot["current_music_style"]) == "suno_02", "style switching immediately preserves the current music context")
+	_require(bool(director.call("set_music_style", "maximum_breach")), "Maximum Breach can be switched on at runtime")
+	snapshot = director.call("get_audio_snapshot")
+	_require(String(snapshot["current_track"]) == "run" and String(snapshot["current_music_style"]) == "maximum_breach", "new imported BGM switching preserves the current music context")
 	_require(not bool(director.call("set_music_style", "unknown")), "unknown BGM styles are rejected safely")
 	_require(bool(director.call("set_music_style", "suno_01")), "BGM01 can be restored at runtime")
 
@@ -115,7 +123,7 @@ func _run() -> void:
 	profile.call("set_setting", "master_volume", 0.85)
 	profile.call("set_setting", "music_volume", 0.76)
 	profile.call("set_setting", "sfx_volume", 0.86)
-	print("AUDIO_SYSTEM_TEST_PASS music=4x5 sfx=%d voices=%d+%d boss_once=true" % [sfx_paths.size(), snapshot["standard_pool"], snapshot["world_pool"]])
+	print("AUDIO_SYSTEM_TEST_PASS music=7x5 sfx=%d voices=%d+%d boss_once=true" % [sfx_paths.size(), snapshot["standard_pool"], snapshot["world_pool"]])
 	quit(0)
 
 
