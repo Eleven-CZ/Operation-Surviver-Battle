@@ -7,6 +7,7 @@ config_version=5
 config/name="iT-BATTLE: 值班幸存者"
 run/main_scene="res://scenes/bootstrap.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
+config/icon="res://assets/icons/ios_app_icon.png"
 
 [autoload]
 

@@ -14,6 +14,8 @@ func _run() -> void:
 	var player: CharacterBody2D = run.get_node("Player")
 	var projection: Node2D = run.get_node("PressureProjection")
 	var snapshot: Dictionary = hud.call("get_mobile_controls_snapshot")
+	var ios_icon: Texture2D = load("res://assets/icons/ios_app_icon.png")
+	_require(ios_icon != null and ios_icon.get_width() == 1024 and ios_icon.get_height() == 1024, "iOS export icon is present at 1024x1024")
 	_require(bool(snapshot.get("visible", false)), "mobile controls are visible with the mobile test feature")
 	_require(bool(snapshot.get("joystick", false)), "mobile HUD exposes a virtual joystick")
 	_require(bool(snapshot.get("interact", false)), "mobile HUD exposes hold-to-align interaction")
