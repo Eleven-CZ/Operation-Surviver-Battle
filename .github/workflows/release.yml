@@ -122,14 +122,14 @@ jobs:
             -project "${{ matrix.export_path }}" \
             -configuration Debug \
             -sdk iphoneos \
-            -derivedDataPath builds/ios-derived \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             DEVELOPMENT_TEAM="" \
+            SYMROOT="${PWD}/builds/ios-products" \
             build
           mkdir -p release
           ditto -c -k --sequesterRsrc --keepParent builds/ios "release/iT-BATTLE-iOS-Xcode-project.zip"
-          IOS_APP_PATH="$(find builds/ios-derived/Build/Products/Debug-iphoneos -maxdepth 1 -type d -name '*.app' -print -quit)"
+          IOS_APP_PATH="$(find builds/ios-products/Debug-iphoneos -maxdepth 1 -type d -name '*.app' -print -quit)"
           test -n "${IOS_APP_PATH}"
           ditto -c -k --sequesterRsrc --keepParent "${IOS_APP_PATH}" "release/iT-BATTLE-iOS-unsigned-app.zip"
 
